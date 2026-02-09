@@ -5,13 +5,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,14 +17,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.focusModifier
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +51,8 @@ fun ConnectedDeviceScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // Состояние для текущего экрана
     var currentScreen by remember { mutableStateOf<DeviceScreen>(DeviceScreen.MAIN) }
@@ -61,12 +63,12 @@ fun ConnectedDeviceScreen(
     var systemSettingsSelectedIndex by remember { mutableStateOf(0) }
 
     // Состояния для экранов ввода
-    var directDosingValue by remember { mutableStateOf(0) }
-    var partialDosingVolume by remember { mutableStateOf(0) }
-    var partialDosingParts by remember { mutableStateOf(1) }
-    var partialFixedVolume by remember { mutableStateOf(0) }
-    var partialFixedParts by remember { mutableStateOf(1) }
-    var freeCollectionValues by remember { mutableStateOf(List(5) { 0 }) }
+    var directDosingValue by remember { mutableStateOf("0") }
+    var partialDosingVolume by remember { mutableStateOf("0") }
+    var partialDosingParts by remember { mutableStateOf("1") }
+    var partialFixedVolume by remember { mutableStateOf("0") }
+    var partialFixedParts by remember { mutableStateOf("1") }
+    var freeCollectionValues by remember { mutableStateOf(List(5) { "0" }) }
 
     // Индекс активного поля для экранов ввода
     var activeInputFieldIndex by remember { mutableStateOf(0) }
@@ -74,11 +76,12 @@ fun ConnectedDeviceScreen(
     // Сохраняем выбранный индекс функций при переходе на экран дозирования
     var savedFunctionsIndex by remember { mutableStateOf(0) }
 
-    // Для прямого дозирования - временное значение, которое изменяется
-    var directDosingTempValue by remember { mutableStateOf(0) }
-
     // Job для управления задержкой навигации
     var navigationDebounceJob by remember { mutableStateOf<Job?>(null) }
+
+    // Состояние для управления фокусом полей ввода
+    var hasTextFieldFocus by remember { mutableStateOf(false) }
+    var currentFocusFieldId by remember { mutableStateOf<String?>(null) }
 
     // Получаем текущий выбранный индекс в зависимости от экрана
     val currentSelectedIndex = when (currentScreen) {
@@ -97,42 +100,30 @@ fun ConnectedDeviceScreen(
         }
     }
 
-    // Функция без задержки для изменения чисел
-    fun withoutDebounce(action: () -> Unit) {
-        navigationDebounceJob?.cancel()
-        action()
+    // Функция для открытия клавиатуры
+    fun openKeyboard(fieldId: String) {
+        keyboardController?.show()
+        hasTextFieldFocus = true
+        currentFocusFieldId = fieldId
     }
 
-    // Обработчик системной кнопки "Назад"
+    // Функция для закрытия клавиатуры
+    fun closeKeyboard() {
+        keyboardController?.hide()
+        focusManager.clearFocus()
+        hasTextFieldFocus = false
+        currentFocusFieldId = null
+    }
+
+    // Обработчик системной кнопки "Назад" - ЗАБЛОКИРОВАН
     BackHandler(enabled = true) {
-        coroutineScope.launch {
-            when (currentScreen) {
-                DeviceScreen.MAIN -> {
-                    if (uiState.connectionState == ConnectionState.DISCONNECTED) {
-                        viewModel.cleanup()
-                        bluetoothViewModel?.cleanupDeviceState(deviceAddress)
-                    }
-                    onBack()
-                }
-                DeviceScreen.FUNCTIONS -> {
-                    currentScreen = DeviceScreen.MAIN
-                    activeInputFieldIndex = 0
-                }
-                DeviceScreen.DIRECT_DOSING,
-                DeviceScreen.PARTIAL_DOSING,
-                DeviceScreen.PARTIAL_FIXED_COLLECTION,
-                DeviceScreen.FREE_COLLECTION -> {
-                    currentScreen = DeviceScreen.FUNCTIONS
-                    // Восстанавливаем сохраненный индекс
-                    functionsSelectedIndex = savedFunctionsIndex
-                    activeInputFieldIndex = 0
-                }
-                DeviceScreen.SYSTEM_SETTINGS -> {
-                    currentScreen = DeviceScreen.MAIN
-                    activeInputFieldIndex = 0
-                }
-            }
-        }
+        // Ничего не делаем - кнопка "назад" заблокирована
+        // Навигация только через панель управления
+    }
+
+    // Закрываем клавиатуру при переходе между экранами
+    LaunchedEffect(currentScreen) {
+        closeKeyboard()
     }
 
     Scaffold(
@@ -160,37 +151,7 @@ fun ConnectedDeviceScreen(
                     actionIconContentColor = TextColor
                 ),
                 navigationIcon = {
-                    IconButton(
-                        onClick = {
-                            coroutineScope.launch {
-                                when (currentScreen) {
-                                    DeviceScreen.MAIN -> {
-                                        viewModel.cleanup()
-                                        onBack()
-                                    }
-                                    DeviceScreen.FUNCTIONS,
-                                    DeviceScreen.SYSTEM_SETTINGS -> {
-                                        currentScreen = DeviceScreen.MAIN
-                                        activeInputFieldIndex = 0
-                                    }
-                                    DeviceScreen.DIRECT_DOSING,
-                                    DeviceScreen.PARTIAL_DOSING,
-                                    DeviceScreen.PARTIAL_FIXED_COLLECTION,
-                                    DeviceScreen.FREE_COLLECTION -> {
-                                        currentScreen = DeviceScreen.FUNCTIONS
-                                        // Восстанавливаем сохраненный индекс
-                                        functionsSelectedIndex = savedFunctionsIndex
-                                        activeInputFieldIndex = 0
-                                    }
-                                }
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "Назад"
-                        )
-                    }
+                    // УБРАНА КНОПКА НАЗАД
                 },
                 actions = {
                     // Статус подключения
@@ -222,30 +183,62 @@ fun ConnectedDeviceScreen(
                     modifier = Modifier.fillMaxSize()
                 )
                 DeviceScreen.DIRECT_DOSING -> DirectDosingScreen(
-                    tempValue = directDosingTempValue,
-                    currentValue = directDosingValue,
-                    onTempValueChange = { directDosingTempValue = it },
+                    value = directDosingValue,
+                    onValueChange = { directDosingValue = it },
                     connectionState = uiState.connectionState,
+                    isFocused = hasTextFieldFocus && currentFocusFieldId == "direct_dosing",
+                    onFocusChange = { focused ->
+                        hasTextFieldFocus = focused
+                        currentFocusFieldId = if (focused) "direct_dosing" else null
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
                 DeviceScreen.PARTIAL_DOSING -> PartialDosingScreen(
                     volume = partialDosingVolume,
                     parts = partialDosingParts,
                     activeFieldIndex = activeInputFieldIndex,
+                    onVolumeChange = { partialDosingVolume = it },
+                    onPartsChange = { partialDosingParts = it },
                     connectionState = uiState.connectionState,
+                    isVolumeFocused = hasTextFieldFocus && currentFocusFieldId == "partial_volume",
+                    isPartsFocused = hasTextFieldFocus && currentFocusFieldId == "partial_parts",
+                    onFocusChange = { field, focused ->
+                        hasTextFieldFocus = focused
+                        currentFocusFieldId = if (focused) field else null
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
                 DeviceScreen.PARTIAL_FIXED_COLLECTION -> PartialFixedCollectionScreen(
                     volume = partialFixedVolume,
                     parts = partialFixedParts,
                     activeFieldIndex = activeInputFieldIndex,
+                    onVolumeChange = { partialFixedVolume = it },
+                    onPartsChange = { partialFixedParts = it },
                     connectionState = uiState.connectionState,
+                    isVolumeFocused = hasTextFieldFocus && currentFocusFieldId == "fixed_volume",
+                    isPartsFocused = hasTextFieldFocus && currentFocusFieldId == "fixed_parts",
+                    onFocusChange = { field, focused ->
+                        hasTextFieldFocus = focused
+                        currentFocusFieldId = if (focused) field else null
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
                 DeviceScreen.FREE_COLLECTION -> FreeCollectionScreen(
                     values = freeCollectionValues,
                     activeFieldIndex = activeInputFieldIndex,
+                    onValueChange = { index, value ->
+                        val newValues = freeCollectionValues.toMutableList()
+                        newValues[index] = value
+                        freeCollectionValues = newValues
+                    },
                     connectionState = uiState.connectionState,
+                    isFieldFocused = { index ->
+                        hasTextFieldFocus && currentFocusFieldId == "free_$index"
+                    },
+                    onFocusChange = { index, focused ->
+                        hasTextFieldFocus = focused
+                        currentFocusFieldId = if (focused) "free_$index" else null
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
                 DeviceScreen.SYSTEM_SETTINGS -> SystemSettingsScreen(
@@ -342,10 +335,12 @@ fun ConnectedDeviceScreen(
                                         DeviceScreen.FUNCTIONS -> {
                                             currentScreen = DeviceScreen.MAIN
                                             activeInputFieldIndex = 0
+                                            closeKeyboard()
                                         }
                                         DeviceScreen.SYSTEM_SETTINGS -> {
                                             currentScreen = DeviceScreen.MAIN
                                             activeInputFieldIndex = 0
+                                            closeKeyboard()
                                         }
                                         else -> {}
                                     }
@@ -360,10 +355,12 @@ fun ConnectedDeviceScreen(
                                             0 -> {
                                                 currentScreen = DeviceScreen.FUNCTIONS
                                                 activeInputFieldIndex = 0
+                                                closeKeyboard()
                                             }
                                             1 -> {
                                                 currentScreen = DeviceScreen.SYSTEM_SETTINGS
                                                 activeInputFieldIndex = 0
+                                                closeKeyboard()
                                             }
                                         }
                                     }
@@ -376,18 +373,38 @@ fun ConnectedDeviceScreen(
                                                 "direct_dosing" -> {
                                                     currentScreen = DeviceScreen.DIRECT_DOSING
                                                     activeInputFieldIndex = 0
+                                                    // Автоматически открываем клавиатуру при входе
+                                                    coroutineScope.launch {
+                                                        delay(100)
+                                                        openKeyboard("direct_dosing")
+                                                    }
                                                 }
                                                 "partial_dosing" -> {
                                                     currentScreen = DeviceScreen.PARTIAL_DOSING
                                                     activeInputFieldIndex = 0
+                                                    // Автоматически открываем клавиатуру при входе
+                                                    coroutineScope.launch {
+                                                        delay(100)
+                                                        openKeyboard("partial_volume")
+                                                    }
                                                 }
                                                 "partial_fixed_collection" -> {
                                                     currentScreen = DeviceScreen.PARTIAL_FIXED_COLLECTION
                                                     activeInputFieldIndex = 0
+                                                    // Автоматически открываем клавиатуру при входе
+                                                    coroutineScope.launch {
+                                                        delay(100)
+                                                        openKeyboard("fixed_volume")
+                                                    }
                                                 }
                                                 "free_collection" -> {
                                                     currentScreen = DeviceScreen.FREE_COLLECTION
                                                     activeInputFieldIndex = 0
+                                                    // Автоматически открываем клавиатуру при входе
+                                                    coroutineScope.launch {
+                                                        delay(100)
+                                                        openKeyboard("free_0")
+                                                    }
                                                 }
                                             }
                                         }
@@ -407,31 +424,23 @@ fun ConnectedDeviceScreen(
                 }
                 DeviceScreen.DIRECT_DOSING -> {
                     DirectDosingControlPanel(
-                        onUpClick = {
-                            withoutDebounce {
-                                if (directDosingTempValue < 300) directDosingTempValue++
-                            }
-                        },
-                        onDownClick = {
-                            withoutDebounce {
-                                if (directDosingTempValue > 0) directDosingTempValue--
-                            }
-                        },
                         onBackClick = {
                             withNavigationDebounce {
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 // Восстанавливаем сохраненный индекс
                                 functionsSelectedIndex = savedFunctionsIndex
                                 activeInputFieldIndex = 0
+                                closeKeyboard()
                             }
                         },
                         onAcceptClick = {
                             withNavigationDebounce {
                                 if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    // Устанавливаем окончательное значение и отправляем команду
-                                    directDosingValue = directDosingTempValue
-                                    val command = "START_DIRECT:$directDosingValue\r\n"
+                                    // Отправляем команду
+                                    val value = directDosingValue.toIntOrNull() ?: 0
+                                    val command = "START_DIRECT:$value\r\n"
                                     viewModel.sendCommand(command)
+                                    closeKeyboard()
                                 }
                             }
                         },
@@ -443,31 +452,17 @@ fun ConnectedDeviceScreen(
                 }
                 DeviceScreen.PARTIAL_DOSING -> {
                     PartialDosingControlPanel(
-                        onUpClick = {
-                            withoutDebounce {
-                                when (activeInputFieldIndex) {
-                                    0 -> if (partialDosingParts < 20) partialDosingParts++
-                                    1 -> if (partialDosingVolume < 1000) partialDosingVolume++
-                                }
-                            }
-                        },
-                        onDownClick = {
-                            withoutDebounce {
-                                when (activeInputFieldIndex) {
-                                    0 -> if (partialDosingParts > 1) partialDosingParts--
-                                    1 -> if (partialDosingVolume > 0) partialDosingVolume--
-                                }
-                            }
-                        },
                         onBackClick = {
                             withNavigationDebounce {
                                 if (activeInputFieldIndex > 0) {
                                     activeInputFieldIndex--
+                                    openKeyboard(if (activeInputFieldIndex == 0) "partial_volume" else "partial_parts")
                                 } else {
                                     currentScreen = DeviceScreen.FUNCTIONS
                                     // Восстанавливаем сохраненный индекс
                                     functionsSelectedIndex = savedFunctionsIndex
                                     activeInputFieldIndex = 0
+                                    closeKeyboard()
                                 }
                             }
                         },
@@ -475,10 +470,14 @@ fun ConnectedDeviceScreen(
                             withNavigationDebounce {
                                 if (activeInputFieldIndex == 0) {
                                     activeInputFieldIndex = 1
+                                    openKeyboard("partial_parts")
                                 } else {
                                     if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        val command = "START_PARTIAL:$partialDosingVolume:$partialDosingParts\r\n"
+                                        val volume = partialDosingVolume.toIntOrNull() ?: 0
+                                        val parts = partialDosingParts.toIntOrNull() ?: 1
+                                        val command = "START_PARTIAL:$volume:$parts\r\n"
                                         viewModel.sendCommand(command)
+                                        closeKeyboard()
                                     }
                                 }
                             }
@@ -493,31 +492,17 @@ fun ConnectedDeviceScreen(
                 }
                 DeviceScreen.PARTIAL_FIXED_COLLECTION -> {
                     PartialFixedControlPanel(
-                        onUpClick = {
-                            withoutDebounce {
-                                when (activeInputFieldIndex) {
-                                    0 -> if (partialFixedVolume < 500) partialFixedVolume++
-                                    1 -> if (partialFixedParts < 10) partialFixedParts++
-                                }
-                            }
-                        },
-                        onDownClick = {
-                            withoutDebounce {
-                                when (activeInputFieldIndex) {
-                                    0 -> if (partialFixedVolume > 0) partialFixedVolume--
-                                    1 -> if (partialFixedParts > 1) partialFixedParts--
-                                }
-                            }
-                        },
                         onBackClick = {
                             withNavigationDebounce {
                                 if (activeInputFieldIndex > 0) {
                                     activeInputFieldIndex--
+                                    openKeyboard(if (activeInputFieldIndex == 0) "fixed_volume" else "fixed_parts")
                                 } else {
                                     currentScreen = DeviceScreen.FUNCTIONS
                                     // Восстанавливаем сохраненный индекс
                                     functionsSelectedIndex = savedFunctionsIndex
                                     activeInputFieldIndex = 0
+                                    closeKeyboard()
                                 }
                             }
                         },
@@ -525,10 +510,14 @@ fun ConnectedDeviceScreen(
                             withNavigationDebounce {
                                 if (activeInputFieldIndex == 0) {
                                     activeInputFieldIndex = 1
+                                    openKeyboard("fixed_parts")
                                 } else {
                                     if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        val command = "START_FIXED_COLLECTION:$partialFixedVolume:$partialFixedParts\r\n"
+                                        val volume = partialFixedVolume.toIntOrNull() ?: 0
+                                        val parts = partialFixedParts.toIntOrNull() ?: 1
+                                        val command = "START_FIXED_COLLECTION:$volume:$parts\r\n"
                                         viewModel.sendCommand(command)
+                                        closeKeyboard()
                                     }
                                 }
                             }
@@ -543,44 +532,31 @@ fun ConnectedDeviceScreen(
                 }
                 DeviceScreen.FREE_COLLECTION -> {
                     FreeCollectionControlPanel(
-                        onUpClick = {
-                            withoutDebounce {
-                                val newValue = freeCollectionValues[activeInputFieldIndex] + 1
-                                if (newValue <= 200) {
-                                    freeCollectionValues = freeCollectionValues.toMutableList().apply {
-                                        this[activeInputFieldIndex] = newValue
-                                    }
-                                }
-                            }
-                        },
-                        onDownClick = {
-                            withoutDebounce {
-                                val newValue = freeCollectionValues[activeInputFieldIndex] - 1
-                                if (newValue >= 0) {
-                                    freeCollectionValues = freeCollectionValues.toMutableList().apply {
-                                        this[activeInputFieldIndex] = newValue
-                                    }
-                                }
-                            }
-                        },
                         onBackClick = {
                             withNavigationDebounce {
-                                // Всегда возвращаемся к предыдущему экрану
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                // Восстанавливаем сохраненный индекс
-                                functionsSelectedIndex = savedFunctionsIndex
-                                activeInputFieldIndex = 0
+                                if (activeInputFieldIndex > 0) {
+                                    activeInputFieldIndex--
+                                    openKeyboard("free_$activeInputFieldIndex")
+                                } else {
+                                    currentScreen = DeviceScreen.FUNCTIONS
+                                    // Восстанавливаем сохраненный индекс
+                                    functionsSelectedIndex = savedFunctionsIndex
+                                    activeInputFieldIndex = 0
+                                    closeKeyboard()
+                                }
                             }
                         },
                         onAcceptClick = {
                             withNavigationDebounce {
                                 if (activeInputFieldIndex < 4) {
                                     activeInputFieldIndex++
+                                    openKeyboard("free_$activeInputFieldIndex")
                                 } else {
                                     if (uiState.connectionState == ConnectionState.CONNECTED) {
                                         val valuesStr = freeCollectionValues.joinToString(":")
                                         val command = "START_FREE_COLLECTION:$valuesStr\r\n"
                                         viewModel.sendCommand(command)
+                                        closeKeyboard()
                                     }
                                 }
                             }
@@ -915,15 +891,34 @@ fun FunctionItem(
 
 @Composable
 fun DirectDosingScreen(
-    tempValue: Int,
-    currentValue: Int,
-    onTempValueChange: (Int) -> Unit,
+    value: String,
+    onValueChange: (String) -> Unit,
     connectionState: ConnectionState,
+    isFocused: Boolean,
+    onFocusChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Автоматически запрашиваем фокус при появлении
+    LaunchedEffect(Unit) {
+        if (connectionState == ConnectionState.CONNECTED) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    LaunchedEffect(isFocused) {
+        if (isFocused) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
     Column(
         modifier = modifier
-            .padding(14.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Заголовок
@@ -932,45 +927,173 @@ fun DirectDosingScreen(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             fontSize = 20.sp,
-            modifier = Modifier.padding(bottom = 22.dp)
+            modifier = Modifier.padding(bottom = 32.dp)
         )
 
-        // Поле ввода временного значения (для изменения)
-        NumberInputField(
-            value = tempValue,
-            label = "Объем забора (0-300 мл)",
-            minValue = 0,
-            maxValue = 300,
-            isActive = true,
-            isEnabled = connectionState == ConnectionState.CONNECTED,
+        // Поле ввода
+        Column(
+            horizontalAlignment = Alignment.Start,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(100.dp)
-        )
+                .padding(horizontal = 16.dp)
+        ) {
+            Text(
+                text = "Объем",
+                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 16.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
 
-        Spacer(modifier = Modifier.height(26.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(60.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (isFocused) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+                border = CardDefaults.outlinedCardBorder().copy(
+                    width = if (isFocused) 2.dp else 1.dp
+                )
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { newValue ->
+                        // Фильтруем только цифры
+                        val filtered = newValue.filter { it.isDigit() }
+                        onValueChange(filtered)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focusState ->
+                            onFocusChange(focusState.isFocused)
+                        },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Done
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            keyboardController?.hide()
+                            onFocusChange(false)
+                        }
+                    ),
+                    textStyle = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 20.sp
+                    ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp)
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (value.isEmpty()) {
+                                Text(
+                                    text = "Введите объем...",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 18.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                    }
+                )
+            }
+
+            Text(
+                text = "Введите значение в мл (0-300 мл)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
 
         // Подсказка
         if (connectionState != ConnectionState.CONNECTED) {
             ConnectionRequiredWarning(
-                message = "Для выполнения дозирования требуется подключение",
+                message = "Для выполнения дозирования требуется подключение к устройству",
                 modifier = Modifier.fillMaxWidth()
             )
+        } else {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.keyboard),
+                        contentDescription = "Клавиатура",
+                        modifier = Modifier.size(32.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Используйте клавиатуру для ввода значения",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 fun PartialDosingScreen(
-    volume: Int,
-    parts: Int,
+    volume: String,
+    parts: String,
     activeFieldIndex: Int,
+    onVolumeChange: (String) -> Unit,
+    onPartsChange: (String) -> Unit,
     connectionState: ConnectionState,
+    isVolumeFocused: Boolean,
+    isPartsFocused: Boolean,
+    onFocusChange: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val volumeFocusRequester = remember { FocusRequester() }
+    val partsFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Управляем фокусом в зависимости от активного поля
+    LaunchedEffect(activeFieldIndex) {
+        when (activeFieldIndex) {
+            0 -> {
+                volumeFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
+            1 -> {
+                partsFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
+        }
+    }
+
     Column(
         modifier = modifier
-            .padding(14.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Заголовок
@@ -979,38 +1102,172 @@ fun PartialDosingScreen(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             fontSize = 20.sp,
-            modifier = Modifier.padding(bottom = 22.dp)
+            modifier = Modifier.padding(bottom = 32.dp)
         )
 
-        // Поле ввода количества частей (первое поле)
-        NumberInputField(
-            value = parts,
-            label = "Количество частей",
-            minValue = 1,
-            maxValue = 20,
-            isActive = activeFieldIndex == 0,
-            isEnabled = connectionState == ConnectionState.CONNECTED,
+        // Поля ввода
+        Column(
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(100.dp)
-        )
+                .padding(horizontal = 16.dp)
+        ) {
+            // Поле для объема
+            Column(
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Объем (мл)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-        Spacer(modifier = Modifier.height(14.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        width = if (isVolumeFocused) 2.dp else 1.dp
+                    )
+                ) {
+                    BasicTextField(
+                        value = volume,
+                        onValueChange = { newValue ->
+                            val filtered = newValue.filter { it.isDigit() }
+                            onVolumeChange(filtered)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .focusRequester(volumeFocusRequester)
+                            .onFocusChanged { focusState ->
+                                onFocusChange("partial_volume", focusState.isFocused)
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Next
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                onFocusChange("partial_parts", true)
+                            }
+                        ),
+                        textStyle = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 20.sp
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (volume.isEmpty()) {
+                                    Text(
+                                        text = "Введите объем...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+            }
 
-        // Поле ввода объема (второе поле)
-        NumberInputField(
-            value = volume,
-            label = "Объем (мл)",
-            minValue = 0,
-            maxValue = 1000,
-            isActive = activeFieldIndex == 1,
-            isEnabled = connectionState == ConnectionState.CONNECTED,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp)
-        )
+            // Поле для количества частей
+            Column(
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Количество частей",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-        Spacer(modifier = Modifier.height(26.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isPartsFocused) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        width = if (isPartsFocused) 2.dp else 1.dp
+                    )
+                ) {
+                    BasicTextField(
+                        value = parts,
+                        onValueChange = { newValue ->
+                            val filtered = newValue.filter { it.isDigit() }
+                            onPartsChange(filtered)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .focusRequester(partsFocusRequester)
+                            .onFocusChanged { focusState ->
+                                onFocusChange("partial_parts", focusState.isFocused)
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                keyboardController?.hide()
+                                onFocusChange("partial_parts", false)
+                            }
+                        ),
+                        textStyle = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 20.sp
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (parts.isEmpty()) {
+                                    Text(
+                                        text = "Введите количество...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
 
         // Подсказка
         if (connectionState != ConnectionState.CONNECTED) {
@@ -1018,21 +1275,73 @@ fun PartialDosingScreen(
                 message = "Для выполнения дозирования требуется подключение",
                 modifier = Modifier.fillMaxWidth()
             )
+        } else {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Активное поле: ${if (activeFieldIndex == 0) "Объем" else "Части"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "Используйте клавиатуру для ввода значений",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 fun PartialFixedCollectionScreen(
-    volume: Int,
-    parts: Int,
+    volume: String,
+    parts: String,
     activeFieldIndex: Int,
+    onVolumeChange: (String) -> Unit,
+    onPartsChange: (String) -> Unit,
     connectionState: ConnectionState,
+    isVolumeFocused: Boolean,
+    isPartsFocused: Boolean,
+    onFocusChange: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val volumeFocusRequester = remember { FocusRequester() }
+    val partsFocusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Управляем фокусом в зависимости от активного поля
+    LaunchedEffect(activeFieldIndex) {
+        when (activeFieldIndex) {
+            0 -> {
+                volumeFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
+            1 -> {
+                partsFocusRequester.requestFocus()
+                keyboardController?.show()
+            }
+        }
+    }
+
     Column(
         modifier = modifier
-            .padding(14.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Заголовок
@@ -1041,38 +1350,172 @@ fun PartialFixedCollectionScreen(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             fontSize = 20.sp,
-            modifier = Modifier.padding(bottom = 22.dp)
+            modifier = Modifier.padding(bottom = 32.dp)
         )
 
-        // Поле ввода объема
-        NumberInputField(
-            value = volume,
-            label = "Объем забора (мл)",
-            minValue = 0,
-            maxValue = 500,
-            isActive = activeFieldIndex == 0,
-            isEnabled = connectionState == ConnectionState.CONNECTED,
+        // Поля ввода
+        Column(
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(100.dp)
-        )
+                .padding(horizontal = 16.dp)
+        ) {
+            // Поле для объема
+            Column(
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Объем забора (мл)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-        Spacer(modifier = Modifier.height(14.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        width = if (isVolumeFocused) 2.dp else 1.dp
+                    )
+                ) {
+                    BasicTextField(
+                        value = volume,
+                        onValueChange = { newValue ->
+                            val filtered = newValue.filter { it.isDigit() }
+                            onVolumeChange(filtered)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .focusRequester(volumeFocusRequester)
+                            .onFocusChanged { focusState ->
+                                onFocusChange("fixed_volume", focusState.isFocused)
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Next
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                onFocusChange("fixed_parts", true)
+                            }
+                        ),
+                        textStyle = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 20.sp
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (volume.isEmpty()) {
+                                    Text(
+                                        text = "Введите объем...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+            }
 
-        // Поле ввода количества частей
-        NumberInputField(
-            value = parts,
-            label = "Количество частей",
-            minValue = 1,
-            maxValue = 10,
-            isActive = activeFieldIndex == 1,
-            isEnabled = connectionState == ConnectionState.CONNECTED,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(100.dp)
-        )
+            // Поле для количества частей
+            Column(
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Количество частей",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-        Spacer(modifier = Modifier.height(26.dp))
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(60.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isPartsFocused) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                    border = CardDefaults.outlinedCardBorder().copy(
+                        width = if (isPartsFocused) 2.dp else 1.dp
+                    )
+                ) {
+                    BasicTextField(
+                        value = parts,
+                        onValueChange = { newValue ->
+                            val filtered = newValue.filter { it.isDigit() }
+                            onPartsChange(filtered)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp)
+                            .focusRequester(partsFocusRequester)
+                            .onFocusChanged { focusState ->
+                                onFocusChange("fixed_parts", focusState.isFocused)
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Number,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                keyboardController?.hide()
+                                onFocusChange("fixed_parts", false)
+                            }
+                        ),
+                        textStyle = MaterialTheme.typography.titleLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontSize = 20.sp
+                        ),
+                        decorationBox = { innerTextField ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(60.dp)
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (parts.isEmpty()) {
+                                    Text(
+                                        text = "Введите количество...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontSize = 18.sp
+                                    )
+                                }
+                                innerTextField()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
 
         // Подсказка
         if (connectionState != ConnectionState.CONNECTED) {
@@ -1080,20 +1523,63 @@ fun PartialFixedCollectionScreen(
                 message = "Для выполнения забора требуется подключение",
                 modifier = Modifier.fillMaxWidth()
             )
+        } else {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Активное поле: ${if (activeFieldIndex == 0) "Объем" else "Части"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "Используйте клавиатуру для ввода значений",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
     }
 }
 
 @Composable
 fun FreeCollectionScreen(
-    values: List<Int>,
+    values: List<String>,
     activeFieldIndex: Int,
+    onValueChange: (Int, String) -> Unit,
     connectionState: ConnectionState,
+    isFieldFocused: (Int) -> Boolean,
+    onFocusChange: (Int, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val focusRequesters = remember { List(5) { FocusRequester() } }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    // Управляем фокусом в зависимости от активного поля
+    LaunchedEffect(activeFieldIndex) {
+        if (activeFieldIndex in 0..4) {
+            focusRequesters[activeFieldIndex].requestFocus()
+            keyboardController?.show()
+        }
+    }
+
     Column(
         modifier = modifier
-            .padding(14.dp),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Заголовок
@@ -1102,30 +1588,102 @@ fun FreeCollectionScreen(
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
             fontSize = 20.sp,
-            modifier = Modifier.padding(bottom = 22.dp)
+            modifier = Modifier.padding(bottom = 24.dp)
         )
 
         // Пять полей ввода
         Column(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()
+            horizontalAlignment = Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
         ) {
             values.forEachIndexed { index, value ->
-                NumberInputField(
-                    value = value,
-                    label = "Объем ${index + 1} (мл)",
-                    minValue = 0,
-                    maxValue = 200,
-                    isActive = activeFieldIndex == index,
-                    isEnabled = connectionState == ConnectionState.CONNECTED,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(100.dp)
-                )
+                Column(
+                    horizontalAlignment = Alignment.Start
+                ) {
+                    Text(
+                        text = "Объем ${index + 1} (мл)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(60.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isFieldFocused(index)) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        border = CardDefaults.outlinedCardBorder().copy(
+                            width = if (isFieldFocused(index)) 2.dp else 1.dp
+                        )
+                    ) {
+                        BasicTextField(
+                            value = value,
+                            onValueChange = { newValue ->
+                                val filtered = newValue.filter { it.isDigit() }
+                                onValueChange(index, filtered)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(60.dp)
+                                .focusRequester(focusRequesters[index])
+                                .onFocusChanged { focusState ->
+                                    onFocusChange(index, focusState.isFocused)
+                                },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = if (index < 4) ImeAction.Next else ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onNext = {
+                                    if (index < 4) {
+                                        onFocusChange(index + 1, true)
+                                    }
+                                },
+                                onDone = {
+                                    keyboardController?.hide()
+                                    onFocusChange(index, false)
+                                }
+                            ),
+                            textStyle = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontSize = 20.sp
+                            ),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(60.dp)
+                                        .padding(horizontal = 16.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    if (value.isEmpty()) {
+                                        Text(
+                                            text = "Введите объем...",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 18.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            }
+                        )
+                    }
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(26.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Подсказка
         if (connectionState != ConnectionState.CONNECTED) {
@@ -1133,97 +1691,36 @@ fun FreeCollectionScreen(
                 message = "Для выполнения забора требуется подключение",
                 modifier = Modifier.fillMaxWidth()
             )
+        } else {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Активное поле: Объем ${activeFieldIndex + 1}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "Используйте клавиатуру для ввода значений",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 14.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
         }
-    }
-}
-
-@Composable
-fun NumberInputField(
-    value: Int,
-    label: String,
-    minValue: Int,
-    maxValue: Int,
-    isActive: Boolean,
-    isEnabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val borderColor = when {
-        !isEnabled -> MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-        isActive -> Color(0xFF4CAF50)
-        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-    }
-
-    val backgroundColor = when {
-        !isEnabled -> MaterialTheme.colorScheme.surfaceContainerLow
-        isActive -> Color(0xFF4CAF50).copy(alpha = 0.1f)
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-
-    val textColor = when {
-        !isEnabled -> MaterialTheme.colorScheme.onSurfaceVariant
-        isActive -> Color(0xFF4CAF50)
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-
-    val scale by animateFloatAsState(
-        targetValue = if (isActive) 1.02f else 1f,
-        animationSpec = tween(durationMillis = 200)
-    )
-
-    val borderWidth by animateFloatAsState(
-        targetValue = if (isActive) 4f else 1f,
-        animationSpec = tween(durationMillis = 200)
-    )
-
-    val elevation by animateFloatAsState(
-        targetValue = if (isActive) 8f else 2f,
-        animationSpec = tween(durationMillis = 200)
-    )
-
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        // Метка поля
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            fontSize = 22.sp,
-            color = if (isEnabled) MaterialTheme.colorScheme.onSurfaceVariant
-            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
-
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(42.dp)
-                .background(backgroundColor, RoundedCornerShape(8.dp))
-                .border(
-                    width = if (isActive) 2.dp else 0.5.dp,
-                    color = borderColor,
-                    shape = RoundedCornerShape(8.dp)
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            // Значение
-            Text(
-                text = value.toString(),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = textColor,
-                fontSize = 24.sp
-            )
-        }
-    }
-    if (isActive && isEnabled) {
-        Text(
-            text = "▲ Используйте кнопки ВВЕРХ/ВНИЗ для изменения",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF4CAF50),
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 4.dp)
-        )
     }
 }
 
@@ -1350,8 +1847,6 @@ fun MainControlPanel(
 
 @Composable
 fun DirectDosingControlPanel(
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
     onBackClick: () -> Unit,
     onAcceptClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -1369,34 +1864,60 @@ fun DirectDosingControlPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Группа регулировки значений
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Кнопка ВВЕРХ (+)
-                SimpleControlButton(
-                    iconResId = R.drawable.arrow_up,
-                    label = "+",
-                    onClick = onUpClick,
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    iconColor = MaterialTheme.colorScheme.primary
-                )
+            // Левая сторона - кнопка НАЗАД
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
 
-                // Кнопка ВНИЗ (-)
-                SimpleControlButton(
-                    iconResId = R.drawable.arrow_down,
-                    label = "-",
-                    onClick = onDownClick,
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    iconColor = MaterialTheme.colorScheme.error
-                )
-            }
+            // Правая сторона - кнопка ВЫПОЛНИТЬ
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = "Выполнить",
+                onClick = onAcceptClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
 
-            // Группа действий
+@Composable
+fun PartialDosingControlPanel(
+    onBackClick: () -> Unit,
+    onAcceptClick: () -> Unit,
+    activeFieldIndex: Int,
+    totalFields: Int,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Индикатор поля
+            Text(
+                text = "Поле ${activeFieldIndex + 1}/$totalFields",
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 // Кнопка НАЗАД
                 SimpleControlButton(
@@ -1407,10 +1928,10 @@ fun DirectDosingControlPanel(
                     iconColor = MaterialTheme.colorScheme.error
                 )
 
-                // Кнопка ВЫПОЛНИТЬ
+                // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
                 SimpleControlButton(
                     iconResId = R.drawable.check_circle,
-                    label = "Выполнить",
+                    label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
                     onClick = onAcceptClick,
                     backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                     iconColor = Color(0xFF4CAF50)
@@ -1421,97 +1942,7 @@ fun DirectDosingControlPanel(
 }
 
 @Composable
-fun PartialDosingControlPanel(
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    activeFieldIndex: Int,
-    totalFields: Int,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Индикатор поля
-            Text(
-                text = "Поле ${activeFieldIndex + 1}/$totalFields",
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Группа регулировки значений
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка ВВЕРХ (+)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_up,
-                        label = "+",
-                        onClick = onUpClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.primary
-                    )
-
-                    // Кнопка ВНИЗ (-)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_down,
-                        label = "-",
-                        onClick = onDownClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                // Группа действий
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка НАЗАД
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_back,
-                        label = "Назад",
-                        onClick = onBackClick,
-                        backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-
-                    // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
-                    SimpleControlButton(
-                        iconResId = R.drawable.check_circle,
-                        label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
-                        onClick = onAcceptClick,
-                        backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                        iconColor = Color(0xFF4CAF50)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 fun PartialFixedControlPanel(
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
     onBackClick: () -> Unit,
     onAcceptClick: () -> Unit,
     activeFieldIndex: Int,
@@ -1544,53 +1975,23 @@ fun PartialFixedControlPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Группа регулировки значений
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка ВВЕРХ (+)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_up,
-                        label = "+",
-                        onClick = onUpClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.primary
-                    )
+                // Кнопка НАЗАД
+                SimpleControlButton(
+                    iconResId = R.drawable.arrow_back,
+                    label = "Назад",
+                    onClick = onBackClick,
+                    backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                    iconColor = MaterialTheme.colorScheme.error
+                )
 
-                    // Кнопка ВНИЗ (-)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_down,
-                        label = "-",
-                        onClick = onDownClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                // Группа действий
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка НАЗАД
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_back,
-                        label = "Назад",
-                        onClick = onBackClick,
-                        backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-
-                    // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
-                    SimpleControlButton(
-                        iconResId = R.drawable.check_circle,
-                        label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
-                        onClick = onAcceptClick,
-                        backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                        iconColor = Color(0xFF4CAF50)
-                    )
-                }
+                // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
+                SimpleControlButton(
+                    iconResId = R.drawable.check_circle,
+                    label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
+                    onClick = onAcceptClick,
+                    backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                    iconColor = Color(0xFF4CAF50)
+                )
             }
         }
     }
@@ -1598,8 +1999,6 @@ fun PartialFixedControlPanel(
 
 @Composable
 fun FreeCollectionControlPanel(
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
     onBackClick: () -> Unit,
     onAcceptClick: () -> Unit,
     activeFieldIndex: Int,
@@ -1632,53 +2031,23 @@ fun FreeCollectionControlPanel(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Группа регулировки значений
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка ВВЕРХ (+)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_up,
-                        label = "+",
-                        onClick = onUpClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.primary
-                    )
+                // Кнопка НАЗАД
+                SimpleControlButton(
+                    iconResId = R.drawable.arrow_back,
+                    label = "Назад",
+                    onClick = onBackClick,
+                    backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                    iconColor = MaterialTheme.colorScheme.error
+                )
 
-                    // Кнопка ВНИЗ (-)
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_down,
-                        label = "-",
-                        onClick = onDownClick,
-                        backgroundColor = MaterialTheme.colorScheme.surface,
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-                }
-
-                // Группа действий
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Кнопка НАЗАД
-                    SimpleControlButton(
-                        iconResId = R.drawable.arrow_back,
-                        label = "Назад",
-                        onClick = onBackClick,
-                        backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                        iconColor = MaterialTheme.colorScheme.error
-                    )
-
-                    // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
-                    SimpleControlButton(
-                        iconResId = R.drawable.check_circle,
-                        label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
-                        onClick = onAcceptClick,
-                        backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                        iconColor = Color(0xFF4CAF50)
-                    )
-                }
+                // Кнопка ДАЛЕЕ/ВЫПОЛНИТЬ
+                SimpleControlButton(
+                    iconResId = R.drawable.check_circle,
+                    label = if (activeFieldIndex < totalFields - 1) "Далее" else "Выполнить",
+                    onClick = onAcceptClick,
+                    backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                    iconColor = Color(0xFF4CAF50)
+                )
             }
         }
     }
@@ -1721,7 +2090,6 @@ fun SimpleControlButton(
         )
     }
 }
-
 
 @Composable
 fun ConnectionStatusIndicator(
