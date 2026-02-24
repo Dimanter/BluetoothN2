@@ -18,9 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -53,13 +50,13 @@ data class BluetoothUIState(
     val connectedDeviceAddress: String? = null,
     val scanFilters: ScanFilters = ScanFilters(),
     val isRefreshing: Boolean = false,
-    val selectedDeviceAddress: String? = null
+    val selectedDeviceAddress: String? = null,
+    val deviceToNavigate: String? = null // добавлено для навигации
 )
 
 class BluetoothViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = BluetoothRepository(application.applicationContext)
     private val context = application.applicationContext
-
     private val _uiState = MutableStateFlow(BluetoothUIState())
     val uiState: StateFlow<BluetoothUIState> = _uiState.asStateFlow()
 
@@ -449,7 +446,13 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             val result = repository.connectToDevice(device.address)
-            if (result.isFailure) {
+            if (result.isSuccess) {
+
+                // Устанавливаем флаг навигации
+                _uiState.update {
+                    it.copy(deviceToNavigate = device.address)
+                }
+            } else {
                 val error = result.exceptionOrNull()
                 _uiState.update {
                     it.copy(
@@ -470,16 +473,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     fun disconnectFromDevice(deviceAddress: String) {
         viewModelScope.launch {
             val result = repository.disconnectFromDevice(deviceAddress)
-            if (result.isFailure) {
-                val error = result.exceptionOrNull()
-                _uiState.update {
-                    it.copy(
-                        errorMessage = "Ошибка отключения: ${error?.message ?: "неизвестная ошибка"}"
-                    )
-                }
-            } else {
+            if (result.isSuccess) {
                 deviceConnectionStates.remove(deviceAddress)
-
                 if (_uiState.value.connectedDeviceAddress == deviceAddress) {
                     _uiState.update {
                         it.copy(
@@ -490,6 +485,13 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
                 refreshDeviceLists()
+            } else {
+                val error = result.exceptionOrNull()
+                _uiState.update {
+                    it.copy(
+                        errorMessage = "Ошибка отключения: ${error?.message ?: "неизвестная ошибка"}"
+                    )
+                }
             }
         }
     }
@@ -513,6 +515,10 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearSuccessMessage() {
         _uiState.update { it.copy(successMessage = null) }
+    }
+
+    fun clearNavigation() {
+        _uiState.update { it.copy(deviceToNavigate = null) }
     }
 
     fun refreshBluetoothState() {

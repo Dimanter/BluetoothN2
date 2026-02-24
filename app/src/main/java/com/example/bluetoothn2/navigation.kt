@@ -26,7 +26,6 @@ fun BluetoothNavigation(
     navController: NavHostController = rememberNavController()
 ) {
     val bluetoothViewModel: BluetoothViewModel = viewModel()
-
     NavHost(
         navController = navController,
         startDestination = Screen.Main.route
@@ -49,7 +48,7 @@ fun BluetoothNavigation(
                         // Переход на экран устройства
                         navController.navigate(Screen.ConnectedDevice.createRoute(deviceAddress))
                     }
-                }
+                },
             )
         }
 
@@ -57,17 +56,14 @@ fun BluetoothNavigation(
             val deviceAddress = backStackEntry.arguments?.getString("deviceAddress") ?: ""
             val connectedDeviceViewModel: ConnectedDeviceViewModel = viewModel()
 
-            // Инициализируем ViewModel с адресом устройства
             LaunchedEffect(deviceAddress) {
                 connectedDeviceViewModel.setDeviceAddress(deviceAddress)
 
-                // Синхронизируем состояние подключения из основного ViewModel
                 val connectionState = bluetoothViewModel.getDeviceConnectionState(deviceAddress)
                 if (connectionState != ConnectionState.DISCONNECTED) {
                     connectedDeviceViewModel.updateConnectionStateFromMain(deviceAddress, connectionState)
                 }
 
-                // Если устройство не найдено в основном ViewModel, пытаемся найти его в репозитории
                 val device = bluetoothViewModel.getDeviceByAddress(deviceAddress)
                 if (device == null) {
                     // Можно попробовать получить устройство из кэша репозитории
@@ -78,11 +74,7 @@ fun BluetoothNavigation(
             ConnectedDeviceScreen(
                 deviceAddress = deviceAddress,
                 onBack = {
-                    // Отключаемся только если мы явно отключились на этом экране
-                    // Иначе сохраняем состояние подключения
-                    if (connectedDeviceViewModel.uiState.value.connectionState == ConnectionState.DISCONNECTED) {
-                        bluetoothViewModel.disconnectFromDevice(deviceAddress)
-                    }
+                    // Убрали вызов disconnectFromDevice, только cleanup и навигация
                     connectedDeviceViewModel.cleanup()
                     navController.popBackStack()
                 },

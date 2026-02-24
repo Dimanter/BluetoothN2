@@ -29,13 +29,19 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import com.example.bluetoothn2.R
+import com.example.bluetoothn2.model.ConnectionState
 import com.example.bluetoothn2.ui.theme.PrimaryColor
 import com.example.bluetoothn2.ui.theme.TextColor
-import com.example.bluetoothn2.model.ConnectionState
 import com.example.bluetoothn2.viewmodel.BluetoothViewModel
 import com.example.bluetoothn2.viewmodel.ConnectedDeviceViewModel
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -91,6 +97,15 @@ fun ConnectedDeviceScreen(
     var hasTextFieldFocus by remember { mutableStateOf(false) }
     var currentFocusFieldId by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(uiState.connectionState) {
+        if (uiState.connectionState == ConnectionState.CONNECTED) {
+            viewModel.sendCommand("+CONNECTED\r\n")
+        }
+        if(uiState.connectionState == ConnectionState.DISCONNECTED){
+            viewModel.sendCommand("+DISCONNECT\r\n")
+        }
+    }
+
     // Получаем текущий выбранный индекс в зависимости от экрана
     val currentSelectedIndex = when (currentScreen) {
         DeviceScreen.MAIN -> mainSelectedIndex
@@ -130,10 +145,46 @@ fun ConnectedDeviceScreen(
         currentFocusFieldId = null
     }
 
-    // Обработчик системной кнопки "Назад" - ЗАБЛОКИРОВАН
+    // Обработка системной кнопки "Назад"
+    fun handleBack() {
+        when (currentScreen) {
+            DeviceScreen.MAIN -> {
+                // На главном экране - отключаем устройство и выходим
+                coroutineScope.launch {
+                    bluetoothViewModel?.disconnectFromDevice(deviceAddress)
+                    viewModel.cleanup()
+                    //viewModel.sendCommand("+DISCONNECT\r\n")
+                    onBack()
+
+                }
+            }
+            DeviceScreen.FUNCTIONS,
+            DeviceScreen.SYSTEM_SETTINGS -> {
+                // Возврат на главный экран
+                currentScreen = DeviceScreen.MAIN
+                closeKeyboard()
+            }
+            else -> {
+                // Для всех остальных экранов (ввод параметров) возвращаемся на экран функций или настроек
+                when {
+                    currentScreen == DeviceScreen.DIRECT_DOSING ||
+                            currentScreen == DeviceScreen.PARTIAL_DOSING ||
+                            currentScreen == DeviceScreen.PARTIAL_FIXED_COLLECTION ||
+                            currentScreen == DeviceScreen.FREE_COLLECTION -> {
+                        currentScreen = DeviceScreen.FUNCTIONS
+                    }
+                    else -> {
+                        currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                    }
+                }
+                closeKeyboard()
+            }
+        }
+    }
+
+    // Системная кнопка "Назад"
     BackHandler(enabled = true) {
-        // Ничего не делаем - кнопка "назад" заблокирована
-        // Навигация только через панель управления
+        handleBack()
     }
 
     // Закрываем клавиатуру при переходе между экранами
@@ -343,236 +394,131 @@ fun ConnectedDeviceScreen(
                     MainControlPanel(
                         onUpClick = {
                             withNavigationDebounce {
-                                // Отправляем команду "up"
                                 sendNavigationCommand("UP")
-
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 1
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 4 // 5 пунктов (0-4)
+                                    DeviceScreen.SYSTEM_SETTINGS -> 4
                                     else -> 0
                                 }
-                                // Круговое меню: если наверху - переходим вниз
                                 when (currentScreen) {
                                     DeviceScreen.MAIN -> {
-                                        if (mainSelectedIndex > 0) {
-                                            mainSelectedIndex--
-                                        } else {
-                                            mainSelectedIndex = maxIndex
-                                        }
+                                        if (mainSelectedIndex > 0) mainSelectedIndex--
+                                        else mainSelectedIndex = maxIndex
                                     }
-
                                     DeviceScreen.FUNCTIONS -> {
-                                        if (functionsSelectedIndex > 0) {
-                                            functionsSelectedIndex--
-                                        } else {
-                                            functionsSelectedIndex = maxIndex
-                                        }
+                                        if (functionsSelectedIndex > 0) functionsSelectedIndex--
+                                        else functionsSelectedIndex = maxIndex
                                     }
-
                                     DeviceScreen.SYSTEM_SETTINGS -> {
-                                        if (systemSettingsSelectedIndex > 0) {
-                                            systemSettingsSelectedIndex--
-                                        } else {
-                                            systemSettingsSelectedIndex = maxIndex
-                                        }
+                                        if (systemSettingsSelectedIndex > 0) systemSettingsSelectedIndex--
+                                        else systemSettingsSelectedIndex = maxIndex
                                     }
-
                                     else -> {}
                                 }
                             }
                         },
                         onDownClick = {
                             withNavigationDebounce {
-                                // Отправляем команду "down"
                                 sendNavigationCommand("DOWN")
-
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 1
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 4 // 5 пунктов (0-4)
+                                    DeviceScreen.SYSTEM_SETTINGS -> 4
                                     else -> 0
                                 }
-                                // Круговое меню: если внизу - переходим наверх
                                 when (currentScreen) {
                                     DeviceScreen.MAIN -> {
-                                        if (mainSelectedIndex < maxIndex) {
-                                            mainSelectedIndex++
-                                        } else {
-                                            mainSelectedIndex = 0
-                                        }
+                                        if (mainSelectedIndex < maxIndex) mainSelectedIndex++
+                                        else mainSelectedIndex = 0
                                     }
-
                                     DeviceScreen.FUNCTIONS -> {
-                                        if (functionsSelectedIndex < maxIndex) {
-                                            functionsSelectedIndex++
-                                        } else {
-                                            functionsSelectedIndex = 0
-                                        }
+                                        if (functionsSelectedIndex < maxIndex) functionsSelectedIndex++
+                                        else functionsSelectedIndex = 0
                                     }
-
                                     DeviceScreen.SYSTEM_SETTINGS -> {
-                                        if (systemSettingsSelectedIndex < maxIndex) {
-                                            systemSettingsSelectedIndex++
-                                        } else {
-                                            systemSettingsSelectedIndex = 0
-                                        }
+                                        if (systemSettingsSelectedIndex < maxIndex) systemSettingsSelectedIndex++
+                                        else systemSettingsSelectedIndex = 0
                                     }
-
                                     else -> {}
                                 }
                             }
                         },
                         onBackClick = {
-                            withNavigationDebounce {
-                                // Отправляем команду "back"
+                            if(currentScreen != DeviceScreen.MAIN) {
                                 sendNavigationCommand("BACK")
-
-                                coroutineScope.launch {
-                                    when (currentScreen) {
-                                        DeviceScreen.MAIN -> {
-                                            viewModel.cleanup()
-                                            onBack()
-                                        }
-
-                                        DeviceScreen.FUNCTIONS -> {
-                                            currentScreen = DeviceScreen.MAIN
-                                            closeKeyboard()
-                                        }
-
-                                        DeviceScreen.SYSTEM_SETTINGS -> {
-                                            currentScreen = DeviceScreen.MAIN
-                                            closeKeyboard()
-                                        }
-
-                                        else -> {}
-                                    }
-                                }
+                            }
+                            withNavigationDebounce {
+                                handleBack()  // Используем общую функцию
                             }
                         },
                         onAcceptClick = {
                             withNavigationDebounce {
-                                // Отправляем команду "enter"
                                 sendNavigationCommand("ENTER")
-
                                 when (currentScreen) {
                                     DeviceScreen.MAIN -> {
                                         when (mainSelectedIndex) {
-                                            0 -> {
-                                                currentScreen = DeviceScreen.FUNCTIONS
-                                                closeKeyboard()
-                                            }
-
-                                            1 -> {
-                                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
-                                                closeKeyboard()
-                                            }
+                                            0 -> currentScreen = DeviceScreen.FUNCTIONS
+                                            1 -> currentScreen = DeviceScreen.SYSTEM_SETTINGS
                                         }
+                                        closeKeyboard()
                                     }
-
                                     DeviceScreen.FUNCTIONS -> {
-                                        val function =
-                                            getFunctionsList().getOrNull(functionsSelectedIndex)
+                                        val function = getFunctionsList().getOrNull(functionsSelectedIndex)
                                         function?.let {
-                                            // Сохраняем текущий индекс перед переходом
                                             savedFunctionsIndex = functionsSelectedIndex
                                             when (it.id) {
                                                 "direct_dosing" -> {
                                                     currentScreen = DeviceScreen.DIRECT_DOSING
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("direct_dosing")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("direct_dosing") }
                                                 }
-
                                                 "partial_dosing" -> {
                                                     currentScreen = DeviceScreen.PARTIAL_DOSING
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("partial_volume")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
                                                 }
-
                                                 "partial_fixed_collection" -> {
-                                                    currentScreen =
-                                                        DeviceScreen.PARTIAL_FIXED_COLLECTION
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("fixed_volume")
-                                                    }
+                                                    currentScreen = DeviceScreen.PARTIAL_FIXED_COLLECTION
+                                                    coroutineScope.launch { delay(100); openKeyboard("fixed_volume") }
                                                 }
-
                                                 "free_collection" -> {
                                                     currentScreen = DeviceScreen.FREE_COLLECTION
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("free_0")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("free_0") }
                                                 }
                                             }
                                         }
                                     }
-
                                     DeviceScreen.SYSTEM_SETTINGS -> {
-                                        val setting = getSystemSettingsList().getOrNull(
-                                            systemSettingsSelectedIndex
-                                        )
+                                        val setting = getSystemSettingsList().getOrNull(systemSettingsSelectedIndex)
                                         setting?.let {
                                             when (it.id) {
                                                 "contrast_reduction" -> {
                                                     currentScreen = DeviceScreen.CONTRAST_REDUCTION
                                                     activeInputFieldIndex = 0
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("contrast")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("contrast") }
                                                 }
-
                                                 "sleep_mode" -> {
                                                     currentScreen = DeviceScreen.SLEEP_MODE
                                                     activeInputFieldIndex = 0
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("sleep")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("sleep") }
                                                 }
-
                                                 "stroke_speed" -> {
                                                     currentScreen = DeviceScreen.STROKE_SPEED
                                                     activeInputFieldIndex = 0
                                                     closeKeyboard()
                                                 }
-
                                                 "max_volume" -> {
                                                     currentScreen = DeviceScreen.MAX_VOLUME
                                                     activeInputFieldIndex = 0
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("max_volume")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("max_volume") }
                                                 }
-
                                                 "coefficient_correction" -> {
-                                                    currentScreen =
-                                                        DeviceScreen.COEFFICIENT_CORRECTION
+                                                    currentScreen = DeviceScreen.COEFFICIENT_CORRECTION
                                                     activeInputFieldIndex = 0
-                                                    // Автоматически открываем клавиатуру при входе
-                                                    coroutineScope.launch {
-                                                        delay(100)
-                                                        openKeyboard("coefficient_0")
-                                                    }
+                                                    coroutineScope.launch { delay(100); openKeyboard("coefficient_0") }
                                                 }
                                             }
                                         }
                                     }
-
                                     else -> {}
                                 }
                             }
@@ -588,28 +534,22 @@ fun ConnectedDeviceScreen(
                     DirectDosingControlPanel(
                         onBackClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                // Отправляем команду
                                 val value = directDosingValue.toIntOrNull() ?: 200
-                                val command = "START_DIRECT:$value\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_DIRECT:$value\r\n")
                             }
                             withNavigationDebounce {
                                 currentScreen = DeviceScreen.FUNCTIONS
-                                // Восстанавливаем сохраненный индекс
                                 functionsSelectedIndex = savedFunctionsIndex
                                 closeKeyboard()
                             }
                         },
                         onAcceptClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                // Отправляем команду
                                 val value = directDosingValue.toIntOrNull() ?: 200
-                                val command = "START_DIRECT:$value\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_DIRECT:$value\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
                             }
@@ -627,12 +567,10 @@ fun ConnectedDeviceScreen(
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val volume = partialDosingVolume.toIntOrNull() ?: 40
                                 val parts = partialDosingParts.toIntOrNull() ?: 5
-                                val command = "START_PARIAL:$volume:$parts\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_PARIAL:$volume:$parts\r\n")
                             }
                             withNavigationDebounce {
                                 currentScreen = DeviceScreen.FUNCTIONS
-                                // Восстанавливаем сохраненный индекс
                                 functionsSelectedIndex = savedFunctionsIndex
                                 closeKeyboard()
                             }
@@ -641,16 +579,12 @@ fun ConnectedDeviceScreen(
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val volume = partialDosingVolume.toIntOrNull() ?: 40
                                 val parts = partialDosingParts.toIntOrNull() ?: 5
-                                val command = "START_PARIAL:$volume:$parts\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_PARIAL:$volume:$parts\r\n")
                             }
                             withNavigationDebounce {
-
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
-
                             }
                         },
                         modifier = Modifier
@@ -666,12 +600,10 @@ fun ConnectedDeviceScreen(
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val volume = partialFixedVolume.toIntOrNull() ?: 0
                                 val parts = partialFixedParts.toIntOrNull() ?: 1
-                                val command = "START_FIXED:$volume:$parts\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_FIXED:$volume:$parts\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
                             }
@@ -680,12 +612,10 @@ fun ConnectedDeviceScreen(
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val volume = partialFixedVolume.toIntOrNull() ?: 0
                                 val parts = partialFixedParts.toIntOrNull() ?: 1
-                                val command = "START_FIXED:$volume:$parts\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_FIXED:$volume:$parts\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
                             }
@@ -702,12 +632,10 @@ fun ConnectedDeviceScreen(
                         onBackClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val valuesStr = freeCollectionValues.joinToString(":")
-                                val command = "START_FREE:$valuesStr\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_FREE:$valuesStr\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
                             }
@@ -715,12 +643,10 @@ fun ConnectedDeviceScreen(
                         onAcceptClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
                                 val valuesStr = freeCollectionValues.joinToString(":")
-                                val command = "START_FREE:$valuesStr\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("START_FREE:$valuesStr\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.FUNCTIONS
                                 functionsSelectedIndex = savedFunctionsIndex
                             }
@@ -744,32 +670,25 @@ fun ConnectedDeviceScreen(
                         },
                         onAcceptClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                // Отправляем команду в зависимости от текущего экрана
                                 val command = when (currentScreen) {
                                     DeviceScreen.CONTRAST_REDUCTION -> {
                                         val value = contrastReductionValue.toIntOrNull() ?: 0
                                         "CONTRAST:$value\r\n"
                                     }
-
                                     DeviceScreen.SLEEP_MODE -> {
                                         val value = sleepModeValue.toIntOrNull() ?: 0
                                         "SLEEP:$value\r\n"
                                     }
-
                                     DeviceScreen.MAX_VOLUME -> {
                                         val value = maxVolumeValue.toIntOrNull() ?: 0
                                         "MAX_VOLUME:$value\r\n"
                                     }
-
                                     else -> ""
                                 }
-                                if (command.isNotEmpty()) {
-                                    viewModel.sendCommand(command)
-                                }
+                                if (command.isNotEmpty()) viewModel.sendCommand(command)
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.SYSTEM_SETTINGS
                             }
                         },
@@ -791,19 +710,13 @@ fun ConnectedDeviceScreen(
                         onUpClick = {
                             withNavigationDebounce {
                                 sendNavigationCommand("UP")
-                                // Уменьшаем индекс, если можно
-                                if (strokeSpeedIndex > 0) {
-                                    strokeSpeedIndex--
-                                }
+                                if (strokeSpeedIndex > 0) strokeSpeedIndex--
                             }
                         },
                         onDownClick = {
                             withNavigationDebounce {
                                 sendNavigationCommand("DOWN")
-                                // Увеличиваем индекс, если можно
-                                if (strokeSpeedIndex < 2) {
-                                    strokeSpeedIndex++
-                                }
+                                if (strokeSpeedIndex < 2) strokeSpeedIndex++
                             }
                         },
                         onAcceptClick = {
@@ -814,12 +727,10 @@ fun ConnectedDeviceScreen(
                                     2 -> "LOW"
                                     else -> "MEDIUM"
                                 }
-                                val command = "STROKE_SPEED:$speed\r\n"
-                                viewModel.sendCommand(command)
+                                viewModel.sendCommand("STROKE_SPEED:$speed\r\n")
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
-                                // Возвращаемся на предыдущий экран
                                 currentScreen = DeviceScreen.SYSTEM_SETTINGS
                             }
                         },
@@ -841,13 +752,11 @@ fun ConnectedDeviceScreen(
                         onAcceptClick = {
                             withNavigationDebounce {
                                 if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    val command =
-                                        "COEFFICIENT:$coefficientD6Value1:$coefficientD6Value2:$coefficientRealValue1:$coefficientRealValue2\r\n"
+                                    val command = "COEFFICIENT:$coefficientD6Value1:$coefficientD6Value2:$coefficientRealValue1:$coefficientRealValue2\r\n"
                                     viewModel.sendCommand(command)
-                                    closeKeyboard()
-                                    // Возвращаемся на предыдущий экран
-                                    currentScreen = DeviceScreen.SYSTEM_SETTINGS
                                 }
+                                closeKeyboard()
+                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
                             }
                         },
                         activeFieldIndex = activeInputFieldIndex,
@@ -894,6 +803,7 @@ data class SystemSetting(
     val description: String,
     val iconResId: Int
 )
+
 
 @Composable
 fun MainDeviceScreen(
