@@ -2,7 +2,10 @@ package com.example.bluetoothn2
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -13,6 +16,10 @@ import com.example.bluetoothn2.screen.MainScreen
 import com.example.bluetoothn2.viewmodel.BluetoothViewModel
 import com.example.bluetoothn2.viewmodel.ConnectedDeviceViewModel
 import com.example.bluetoothn2.model.ConnectionState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 sealed class Screen(val route: String) {
     object Main : Screen("main")
@@ -21,10 +28,14 @@ sealed class Screen(val route: String) {
     }
 }
 
+
+
 @Composable
 fun BluetoothNavigation(
     navController: NavHostController = rememberNavController()
 ) {
+
+
     val bluetoothViewModel: BluetoothViewModel = viewModel()
     NavHost(
         navController = navController,
@@ -34,20 +45,8 @@ fun BluetoothNavigation(
             MainScreen(
                 viewModel = bluetoothViewModel,
                 onNavigateToConnectedDevice = { deviceAddress ->
-                    // Сохраняем выбранное устройство
-                    val device = bluetoothViewModel.getDeviceByAddress(deviceAddress)
-                    device?.let {
-                        bluetoothViewModel.selectDevice(deviceAddress)
-
-                        // Если устройство не подключено, предлагаем подключиться при переходе
-                        if (bluetoothViewModel.getDeviceConnectionState(deviceAddress) != ConnectionState.CONNECTED) {
-                            // Можно автоматически инициировать подключение или просто перейти
-                            // bluetoothViewModel.connectToDevice(device)
-                        }
-
-                        // Переход на экран устройства
-                        navController.navigate(Screen.ConnectedDevice.createRoute(deviceAddress))
-                    }
+                    // Просто переходим на экран устройства
+                    navController.navigate(Screen.ConnectedDevice.createRoute(deviceAddress))
                 },
             )
         }
@@ -68,6 +67,11 @@ fun BluetoothNavigation(
                 if (device == null) {
                     // Можно попробовать получить устройство из кэша репозитории
                     // или создать временное устройство по адресу
+                }
+
+                // Отправляем команду +CONNECTED при каждом входе на экран, если устройство уже подключено
+                if (connectedDeviceViewModel.uiState.value.connectionState == ConnectionState.CONNECTED) {
+                    connectedDeviceViewModel.sendCommand("+CONNECTED\r\n")
                 }
             }
 

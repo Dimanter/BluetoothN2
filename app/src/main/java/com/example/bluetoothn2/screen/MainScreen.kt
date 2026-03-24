@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -16,7 +17,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.bluetoothn2.R
 import com.example.bluetoothn2.model.BleDeviceModel
 import com.example.bluetoothn2.model.ConnectionState
@@ -43,7 +46,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun MainScreen(
     viewModel: BluetoothViewModel,
-
     onNavigateToConnectedDevice: (String) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -80,14 +82,6 @@ fun MainScreen(
         }
     }
 
-    // Навигация при успешном подключении
-    LaunchedEffect(uiState.deviceToNavigate) {
-        uiState.deviceToNavigate?.let { address ->
-            onNavigateToConnectedDevice(address)
-            viewModel.clearNavigation()
-        }
-    }
-
     // Показ сообщений
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let {
@@ -110,6 +104,18 @@ fun MainScreen(
                     containerColor = MaterialTheme.colorScheme.primaryContainer
                 ),
                 actions = {
+                    // Кнопка версии
+                    IconButton(
+                        onClick = {
+                            Toast.makeText(context, "Версия 1.240326.1419", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = "Версия",
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
                     // Кнопка сканирования
                     IconButton(
                         onClick = {
@@ -162,20 +168,56 @@ fun MainScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // Простой список устройств
-            BleDeviceSimpleList(
+            // Список устройств
+            BleDeviceSelectionList(
                 devices = uiState.filteredDevices,
                 isScanning = uiState.isScanning,
                 connectedDeviceAddress = uiState.connectedDeviceAddress,
-                onDeviceClick = { device ->
-                    if (device.address == uiState.connectedDeviceAddress) {
-                        viewModel.disconnectFromDevice(device.address)
-                    } else {
-                        viewModel.connectToDevice(device)
-
-                    }
-                }
+                selectedDeviceAddress = uiState.selectedDeviceAddress,
+                onDeviceSelected = { device ->
+                    viewModel.setSelectedDevice(device.address)
+                },
+                modifier = Modifier.weight(1f)
             )
+            val connectedDeviceViewModel: ConnectedDeviceViewModel = viewModel()
+            // Кнопка подключения
+            val selectedDevice = uiState.selectedDeviceAddress?.let { address ->
+                uiState.filteredDevices.find { it.address == address }
+            }
+
+            Button(
+                onClick = {
+                    selectedDevice?.let {
+                        device ->
+                        viewModel.connectToDevice(device)
+                        onNavigateToConnectedDevice(device.address)
+                    }
+                },
+                enabled = selectedDevice != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                    disabledContentColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f)
+                )
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.outline_bluetooth_24),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Подключиться",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
@@ -199,14 +241,16 @@ private fun getRequiredPermissions(context: Context): List<String> {
 }
 
 @Composable
-fun BleDeviceSimpleList(
+fun BleDeviceSelectionList(
     devices: List<BleDeviceModel>,
     isScanning: Boolean,
     connectedDeviceAddress: String?,
-    onDeviceClick: (BleDeviceModel) -> Unit
+    selectedDeviceAddress: String?,
+    onDeviceSelected: (BleDeviceModel) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -214,7 +258,7 @@ fun BleDeviceSimpleList(
             item {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
+                        .fillParentMaxSize()
                         .padding(32.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -223,10 +267,11 @@ fun BleDeviceSimpleList(
             }
         } else {
             items(devices, key = { it.address }) { device ->
-                SimpleDeviceItem(
+                SelectableDeviceItem(
                     device = device,
                     isConnected = device.address == connectedDeviceAddress,
-                    onClick = { onDeviceClick(device) }
+                    isSelected = device.address == selectedDeviceAddress,
+                    onClick = { onDeviceSelected(device) }
                 )
             }
         }
@@ -234,19 +279,25 @@ fun BleDeviceSimpleList(
 }
 
 @Composable
-fun SimpleDeviceItem(
+fun SelectableDeviceItem(
     device: BleDeviceModel,
     isConnected: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val backgroundColor = when {
+        isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        isConnected -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surface
+    }
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .clickable { onClick() },
-        color = if (isConnected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
+        color = backgroundColor,
+        tonalElevation = 1.dp,
     ) {
         Row(
             modifier = Modifier
@@ -258,7 +309,7 @@ fun SimpleDeviceItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = device.name ?: "Неизвестное",
-                    fontWeight = if (isConnected) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = if (isConnected || isSelected) FontWeight.Bold else FontWeight.Normal,
                     fontSize = 16.sp,
                     maxLines = 1
                 )
@@ -279,12 +330,27 @@ fun SimpleDeviceItem(
                 }
             }
 
-            // Индикатор подключения
-            Surface(
-                modifier = Modifier.size(12.dp),
-                shape = CircleShape,
-                color = if (isConnected) Color.Green else Color.Gray
-            ) {}
+            // Индикаторы: слева - подключение, справа - выбор
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Индикатор подключения (зеленый кружок)
+                Surface(
+                    modifier = Modifier.size(12.dp),
+                    shape = CircleShape,
+                    color = if (isConnected) Color.Green else Color.Gray
+                ) {}
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Индикатор выбора (галочка)
+                if (isSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = "Выбрано",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
         }
     }
 }

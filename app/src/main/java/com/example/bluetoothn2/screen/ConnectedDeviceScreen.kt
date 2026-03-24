@@ -1,10 +1,16 @@
 package com.example.bluetoothn2.screen
 
+import android.R.attr.onClick
 import android.annotation.SuppressLint
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,31 +23,30 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.consumeAllChanges
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewModelScope
 import com.example.bluetoothn2.R
 import com.example.bluetoothn2.model.ConnectionState
 import com.example.bluetoothn2.ui.theme.PrimaryColor
 import com.example.bluetoothn2.ui.theme.TextColor
 import com.example.bluetoothn2.viewmodel.BluetoothViewModel
 import com.example.bluetoothn2.viewmodel.ConnectedDeviceViewModel
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -97,14 +102,12 @@ fun ConnectedDeviceScreen(
     var hasTextFieldFocus by remember { mutableStateOf(false) }
     var currentFocusFieldId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(uiState.connectionState) {
-        if (uiState.connectionState == ConnectionState.CONNECTED) {
-            viewModel.sendCommand("+CONNECTED\r\n")
-        }
-        if(uiState.connectionState == ConnectionState.DISCONNECTED){
-            viewModel.sendCommand("+DISCONNECT\r\n")
-        }
-    }
+    // --- Состояния фокуса для экранов дозирования ---
+    var directDosingFocus by remember { mutableStateOf(-1) } // -1 = нет фокуса, 0 = поле в фокусе
+    var partialDosingFocus by remember { mutableStateOf(-1) } // -1, 0 (объем), 1 (части)
+    var partialFixedFocus by remember { mutableStateOf(-1) }  // -1, 0 (объем), 1 (части)
+    var freeCollectionFocus by remember { mutableStateOf(-1) } // -1, 0..4
+    var notEmpty  by remember { mutableStateOf(false) }
 
     // Получаем текущий выбранный индекс в зависимости от экрана
     val currentSelectedIndex = when (currentScreen) {
@@ -118,7 +121,7 @@ fun ConnectedDeviceScreen(
     fun withNavigationDebounce(action: () -> Unit) {
         navigationDebounceJob?.cancel()
         navigationDebounceJob = coroutineScope.launch {
-            delay(250)
+            delay(350)
             action()
         }
     }
@@ -145,6 +148,18 @@ fun ConnectedDeviceScreen(
         currentFocusFieldId = null
     }
 
+    LaunchedEffect(uiState.connectionState == ConnectionState.CONNECTED) {
+        withNavigationDebounce {
+            viewModel.sendCommand("+CONNECTED\r\n")
+        }
+    }
+
+    LaunchedEffect(uiState.connectionState) {
+        withNavigationDebounce {
+            viewModel.sendCommand("+CONNECTED\r\n")
+        }
+    }
+
     // Обработка системной кнопки "Назад"
     fun handleBack() {
         when (currentScreen) {
@@ -153,9 +168,8 @@ fun ConnectedDeviceScreen(
                 coroutineScope.launch {
                     bluetoothViewModel?.disconnectFromDevice(deviceAddress)
                     viewModel.cleanup()
-                    //viewModel.sendCommand("+DISCONNECT\r\n")
+                    viewModel.sendCommand("+DISCONNECT\r\n")
                     onBack()
-
                 }
             }
             DeviceScreen.FUNCTIONS,
@@ -215,7 +229,7 @@ fun ConnectedDeviceScreen(
                         fontSize = 18.sp
                     )
                 },
-                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = PrimaryColor,
                     titleContentColor = TextColor,
                     navigationIconContentColor = TextColor,
@@ -259,10 +273,16 @@ fun ConnectedDeviceScreen(
                     value = directDosingValue,
                     onValueChange = { directDosingValue = it },
                     connectionState = uiState.connectionState,
-                    isFocused = hasTextFieldFocus && currentFocusFieldId == "direct_dosing",
+                    isFocused = directDosingFocus == 0,
                     onFocusChange = { focused ->
-                        hasTextFieldFocus = focused
-                        currentFocusFieldId = if (focused) "direct_dosing" else null
+                        directDosingFocus = if (focused) 0 else -1
+                        if (focused) {
+                            hasTextFieldFocus = true
+                            currentFocusFieldId = "direct_dosing"
+                        } else {
+                            hasTextFieldFocus = false
+                            currentFocusFieldId = null
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -273,11 +293,31 @@ fun ConnectedDeviceScreen(
                     onVolumeChange = { partialDosingVolume = it },
                     onPartsChange = { partialDosingParts = it },
                     connectionState = uiState.connectionState,
-                    isVolumeFocused = hasTextFieldFocus && currentFocusFieldId == "partial_volume",
-                    isPartsFocused = hasTextFieldFocus && currentFocusFieldId == "partial_parts",
+                    isVolumeFocused = partialDosingFocus == 0,
+                    isPartsFocused = partialDosingFocus == 1,
                     onFocusChange = { field, focused ->
-                        hasTextFieldFocus = focused
-                        currentFocusFieldId = if (focused) field else null
+                        when (field) {
+                            "partial_volume" -> {
+                                partialDosingFocus = if (focused) 0 else -1
+                                if (focused) {
+                                    hasTextFieldFocus = true
+                                    currentFocusFieldId = "partial_volume"
+                                } else {
+                                    hasTextFieldFocus = false
+                                    currentFocusFieldId = null
+                                }
+                            }
+                            "partial_parts" -> {
+                                partialDosingFocus = if (focused) 1 else -1
+                                if (focused) {
+                                    hasTextFieldFocus = true
+                                    currentFocusFieldId = "partial_parts"
+                                } else {
+                                    hasTextFieldFocus = false
+                                    currentFocusFieldId = null
+                                }
+                            }
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -288,11 +328,31 @@ fun ConnectedDeviceScreen(
                     onVolumeChange = { partialFixedVolume = it },
                     onPartsChange = { partialFixedParts = it },
                     connectionState = uiState.connectionState,
-                    isVolumeFocused = hasTextFieldFocus && currentFocusFieldId == "fixed_volume",
-                    isPartsFocused = hasTextFieldFocus && currentFocusFieldId == "fixed_parts",
+                    isVolumeFocused = partialFixedFocus == 0,
+                    isPartsFocused = partialFixedFocus == 1,
                     onFocusChange = { field, focused ->
-                        hasTextFieldFocus = focused
-                        currentFocusFieldId = if (focused) field else null
+                        when (field) {
+                            "fixed_volume" -> {
+                                partialFixedFocus = if (focused) 0 else -1
+                                if (focused) {
+                                    hasTextFieldFocus = true
+                                    currentFocusFieldId = "fixed_volume"
+                                } else {
+                                    hasTextFieldFocus = false
+                                    currentFocusFieldId = null
+                                }
+                            }
+                            "fixed_parts" -> {
+                                partialFixedFocus = if (focused) 1 else -1
+                                if (focused) {
+                                    hasTextFieldFocus = true
+                                    currentFocusFieldId = "fixed_parts"
+                                } else {
+                                    hasTextFieldFocus = false
+                                    currentFocusFieldId = null
+                                }
+                            }
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -305,12 +365,16 @@ fun ConnectedDeviceScreen(
                         freeCollectionValues = newValues
                     },
                     connectionState = uiState.connectionState,
-                    isFieldFocused = { index ->
-                        hasTextFieldFocus && currentFocusFieldId == "free_$index"
-                    },
+                    activeFieldIndex = freeCollectionFocus,
                     onFocusChange = { index, focused ->
-                        hasTextFieldFocus = focused
-                        currentFocusFieldId = if (focused) "free_$index" else null
+                        freeCollectionFocus = if (focused) index else -1
+                        if (focused) {
+                            hasTextFieldFocus = true
+                            currentFocusFieldId = "free_$index"
+                        } else {
+                            hasTextFieldFocus = false
+                            currentFocusFieldId = null
+                        }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -396,7 +460,7 @@ fun ConnectedDeviceScreen(
                             withNavigationDebounce {
                                 sendNavigationCommand("UP")
                                 val maxIndex = when (currentScreen) {
-                                    DeviceScreen.MAIN -> 1
+                                    DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
                                     DeviceScreen.SYSTEM_SETTINGS -> 4
                                     else -> 0
@@ -422,7 +486,7 @@ fun ConnectedDeviceScreen(
                             withNavigationDebounce {
                                 sendNavigationCommand("DOWN")
                                 val maxIndex = when (currentScreen) {
-                                    DeviceScreen.MAIN -> 1
+                                    DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
                                     DeviceScreen.SYSTEM_SETTINGS -> 4
                                     else -> 0
@@ -449,7 +513,7 @@ fun ConnectedDeviceScreen(
                                 sendNavigationCommand("BACK")
                             }
                             withNavigationDebounce {
-                                handleBack()  // Используем общую функцию
+                                handleBack()
                             }
                         },
                         onAcceptClick = {
@@ -460,6 +524,18 @@ fun ConnectedDeviceScreen(
                                         when (mainSelectedIndex) {
                                             0 -> currentScreen = DeviceScreen.FUNCTIONS
                                             1 -> currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                            2 -> {
+                                                viewModel.sendCommand("BLUETOOTH_MENU\r\n")
+                                            }
+                                            3 -> {
+                                                viewModel.sendCommand("POWER_OFF\r\n")
+                                                coroutineScope.launch {
+                                                    delay(500)
+                                                    bluetoothViewModel?.disconnectFromDevice(deviceAddress)
+                                                    viewModel.cleanup()
+                                                    onBack()
+                                                }
+                                            }
                                         }
                                         closeKeyboard()
                                     }
@@ -470,21 +546,22 @@ fun ConnectedDeviceScreen(
                                             when (it.id) {
                                                 "direct_dosing" -> {
                                                     currentScreen = DeviceScreen.DIRECT_DOSING
-                                                    coroutineScope.launch { delay(100); openKeyboard("direct_dosing") }
+                                                    directDosingFocus = -1 // фокус не установлен
                                                 }
                                                 "partial_dosing" -> {
                                                     currentScreen = DeviceScreen.PARTIAL_DOSING
-                                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                                                    partialDosingFocus = -1
                                                 }
                                                 "partial_fixed_collection" -> {
                                                     currentScreen = DeviceScreen.PARTIAL_FIXED_COLLECTION
-                                                    coroutineScope.launch { delay(100); openKeyboard("fixed_volume") }
+                                                    partialFixedFocus = -1
                                                 }
                                                 "free_collection" -> {
                                                     currentScreen = DeviceScreen.FREE_COLLECTION
-                                                    coroutineScope.launch { delay(100); openKeyboard("free_0") }
+                                                    freeCollectionFocus = -1
                                                 }
                                             }
+                                            closeKeyboard()
                                         }
                                     }
                                     DeviceScreen.SYSTEM_SETTINGS -> {
@@ -533,25 +610,45 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.DIRECT_DOSING -> {
                     DirectDosingControlPanel(
                         onBackClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                            if(!notEmpty) {
                                 val value = directDosingValue.toIntOrNull() ?: 200
-                                viewModel.sendCommand("START_DIRECT:$value\r\n")
-                            }
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
-                                closeKeyboard()
+                                // Если фокус на поле (directDosingFocus == 0) – отправляем BACK:значение и выходим
+                                if (directDosingFocus == 0) {
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:${value}\r\n")
+                                    }
+                                    directDosingFocus = -1
+                                } else {
+                                    // Если фокус не установлен – просто выходим
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:${value}\r\n")
+                                    }
+                                    withNavigationDebounce {
+                                        currentScreen = DeviceScreen.FUNCTIONS
+                                        functionsSelectedIndex = savedFunctionsIndex
+                                        closeKeyboard()
+                                    }
+                                }
                             }
                         },
-                        onAcceptClick = {
+                        onEnterClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val value = directDosingValue.toIntOrNull() ?: 200
-                                viewModel.sendCommand("START_DIRECT:$value\r\n")
+                                viewModel.sendCommand("ENTER:\r\n")
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                            // "Выполнить" – переключаем фокус
+                            if (directDosingFocus == -1) {
+                                // Устанавливаем фокус
+                                directDosingFocus = 0
+                                coroutineScope.launch { delay(100); openKeyboard("direct_dosing") }
+                            } else {
+                                // Если уже в фокусе – ничего не делаем
+                            }
+                        },
+                        onStartClick = {
+                            // "Старт" – отправляем команду START_DIRECT и выходим
+                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                viewModel.sendCommand("START:\r\n")
+                                notEmpty = !notEmpty
                             }
                         },
                         modifier = Modifier
@@ -564,27 +661,55 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.PARTIAL_DOSING -> {
                     PartialDosingControlPanel(
                         onBackClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                            if(!notEmpty) {
                                 val volume = partialDosingVolume.toIntOrNull() ?: 40
                                 val parts = partialDosingParts.toIntOrNull() ?: 5
-                                viewModel.sendCommand("START_PARIAL:$volume:$parts\r\n")
-                            }
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
-                                closeKeyboard()
+                                if (partialDosingFocus > -1) {
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:$$volume:$parts\r\n")
+                                    }
+                                    focusManager.clearFocus(true)
+                                    partialDosingFocus = -1
+                                } else {
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:$$volume:$parts\r\n")
+                                    }
+                                    withNavigationDebounce {
+                                        currentScreen = DeviceScreen.FUNCTIONS
+                                        functionsSelectedIndex = savedFunctionsIndex
+                                        closeKeyboard()
+                                    }
+                                }
                             }
                         },
-                        onAcceptClick = {
+                        onEnterClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val volume = partialDosingVolume.toIntOrNull() ?: 40
-                                val parts = partialDosingParts.toIntOrNull() ?: 5
-                                viewModel.sendCommand("START_PARIAL:$volume:$parts\r\n")
+                                viewModel.sendCommand("ENTER:\r\n")
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                            // "Выполнить" – переход по полям
+                            when (partialDosingFocus) {
+                                -1 -> {
+                                    // Нет фокуса → устанавливаем на объём
+                                    partialDosingFocus = 0
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                                }
+                                0 -> {
+                                    // На объёме → переходим на части
+                                    partialDosingFocus = 1
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_parts") }
+                                }
+                                1 -> {
+                                    partialDosingFocus = -1
+                                    partialDosingFocus = 0
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                                }
+                            }
+                        },
+                        onStartClick = {
+                            // "Старт" – отправляем команду START_PARIAL и выходим
+                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                viewModel.sendCommand("START:\r\n")
+                                notEmpty = !notEmpty
                             }
                         },
                         modifier = Modifier
@@ -597,27 +722,46 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.PARTIAL_FIXED_COLLECTION -> {
                     PartialFixedControlPanel(
                         onBackClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                            if(!notEmpty) {
                                 val volume = partialFixedVolume.toIntOrNull() ?: 0
                                 val parts = partialFixedParts.toIntOrNull() ?: 1
-                                viewModel.sendCommand("START_FIXED:$volume:$parts\r\n")
-                            }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                                if (partialFixedFocus > -1) {
+                                    partialFixedFocus = -1
+                                    focusManager.clearFocus(true)
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:$volume:$parts\r\n")
+                                    }
+                                } else {
+                                    viewModel.sendCommand("BACK:$volume:$parts\r\n")
+                                    withNavigationDebounce {
+                                        currentScreen = DeviceScreen.FUNCTIONS
+                                        functionsSelectedIndex = savedFunctionsIndex
+                                        closeKeyboard()
+                                    }
+                                }
                             }
                         },
-                        onAcceptClick = {
+                        onEnterClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val volume = partialFixedVolume.toIntOrNull() ?: 0
-                                val parts = partialFixedParts.toIntOrNull() ?: 1
-                                viewModel.sendCommand("START_FIXED:$volume:$parts\r\n")
+                                viewModel.sendCommand("ENTER:\r\n")
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                            // "Выполнить" – переход по полям
+                                if (partialFixedFocus == -1) {
+                                    partialFixedFocus = 0
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                                } else if (partialFixedFocus < 1) {
+                                    partialFixedFocus++
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_parts") }
+                                }
+                                else if (partialFixedFocus == 1) {
+                                    partialFixedFocus = 0
+                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                                }
+                        },
+                        onStartClick = {
+                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                viewModel.sendCommand("START:\r\n")
+                                notEmpty = !notEmpty
                             }
                         },
                         modifier = Modifier
@@ -630,25 +774,45 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.FREE_COLLECTION -> {
                     FreeCollectionControlPanel(
                         onBackClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                            if(!notEmpty) {
                                 val valuesStr = freeCollectionValues.joinToString(":")
-                                viewModel.sendCommand("START_FREE:$valuesStr\r\n")
-                            }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                                if (freeCollectionFocus > -1) {
+                                    freeCollectionFocus = -1
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:$valuesStr\r\n")
+                                    }
+
+                                } else {
+                                    viewModel.sendCommand("BACK:$valuesStr\r\n")
+                                    withNavigationDebounce {
+                                        currentScreen = DeviceScreen.FUNCTIONS
+                                        functionsSelectedIndex = savedFunctionsIndex
+                                        closeKeyboard()
+                                    }
+                                }
                             }
                         },
-                        onAcceptClick = {
+                        onEnterClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val valuesStr = freeCollectionValues.joinToString(":")
-                                viewModel.sendCommand("START_FREE:$valuesStr\r\n")
+                                viewModel.sendCommand("ENTER:\r\n")
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.FUNCTIONS
-                                functionsSelectedIndex = savedFunctionsIndex
+                            // Переход по полям (0..4)
+                            if (freeCollectionFocus == -1) {
+                                freeCollectionFocus = 0
+                                coroutineScope.launch { delay(100); openKeyboard("free_0") }
+                            } else if (freeCollectionFocus < 4) {
+                                freeCollectionFocus++
+                                coroutineScope.launch { delay(100); openKeyboard("free_$freeCollectionFocus") }
+                            }
+                            else if (freeCollectionFocus == 4) {
+                                freeCollectionFocus = 0
+                                coroutineScope.launch { delay(100); openKeyboard("free_0") }
+                            }
+                        },
+                        onStartClick = {
+                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                viewModel.sendCommand("START:\r\n")
+                                notEmpty = !notEmpty
                             }
                         },
                         modifier = Modifier
@@ -792,7 +956,6 @@ enum class DeviceScreen {
 data class DeviceFunction(
     val id: String,
     val name: String,
-    val description: String,
     val iconResId: Int
 )
 
@@ -829,7 +992,7 @@ fun MainDeviceScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Список из двух элементов (НЕ КЛИКАБЕЛЬНЫ)
+        // Список из четырёх элементов (НЕ КЛИКАБЕЛЬНЫ)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -839,7 +1002,7 @@ fun MainDeviceScreen(
             // Пункт 1: Функции
             MainMenuItem(
                 title = "Функции",
-                description = "Управление дозированием и забором",
+                description = "",
                 isSelected = selectedIndex == 0,
                 iconResId = R.drawable.science,
                 iconColor = Color(0xFF4CAF50),
@@ -848,10 +1011,30 @@ fun MainDeviceScreen(
 
             // Пункт 2: Системные настройки
             MainMenuItem(
-                title = "Системные настройки",
-                description = "Настройка параметров устройства",
+                title = "Настройки",
+                description = "",
                 isSelected = selectedIndex == 1,
                 iconResId = R.drawable.settings,
+                iconColor = Color(0xFF2196F3),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Пункт 3: Блютуз
+            MainMenuItem(
+                title = "Блютуз",
+                description = "",
+                isSelected = selectedIndex == 2,
+                iconResId = R.drawable.outline_bluetooth_24,
+                iconColor = Color(0xFF2196F3),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Пункт 4: Выключение
+            MainMenuItem(
+                title = "Выключение",
+                description = "",
+                isSelected = selectedIndex == 3,
+                iconResId = R.drawable.close,
                 iconColor = Color(0xFF2196F3),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -1074,7 +1257,7 @@ fun FunctionItem(
                 )
 
                 Text(
-                    text = function.description,
+                    text = "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 18.sp
@@ -1095,19 +1278,20 @@ fun DirectDosingScreen(
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    var canBeFocused by remember { mutableStateOf(false)}
 
     // Автоматически запрашиваем фокус при появлении
-    LaunchedEffect(Unit) {
-        if (connectionState == ConnectionState.CONNECTED) {
-            focusRequester.requestFocus()
-            keyboardController?.show()
-        }
-    }
-
     LaunchedEffect(isFocused) {
         if (isFocused) {
+            canBeFocused = true
             focusRequester.requestFocus()
+            delay(150)
             keyboardController?.show()
+        } else {
+            canBeFocused = false
+            keyboardController?.hide()
+            focusManager.clearFocus(true)
         }
     }
 
@@ -1140,18 +1324,21 @@ fun DirectDosingScreen(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
 
-            Card(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(60.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isFocused) MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceVariant
-                ),
-                border = CardDefaults.outlinedCardBorder().copy(
-                    width = if (isFocused) 2.dp else 1.dp
-                )
+                    .height(60.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if(isFocused) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .border(
+                            width = if(isFocused) 2.dp else 1.dp,
+                        color = if(isFocused) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.outline,
+                        shape = RoundedCornerShape(8.dp)
+                            )
             ) {
                 BasicTextField(
                     value = value,
@@ -1164,9 +1351,12 @@ fun DirectDosingScreen(
                         .fillMaxWidth()
                         .height(60.dp)
                         .focusRequester(focusRequester)
+                        .focusProperties{canFocus = canBeFocused}
                         .onFocusChanged { focusState ->
                             onFocusChange(focusState.isFocused)
+                            if(!focusState.isFocused) canBeFocused = false
                         },
+                    readOnly = false,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
                         keyboardType = KeyboardType.Number,
@@ -1175,7 +1365,6 @@ fun DirectDosingScreen(
                     keyboardActions = KeyboardActions(
                         onDone = {
                             keyboardController?.hide()
-                            onFocusChange(false)
                         }
                     ),
                     textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1247,7 +1436,7 @@ fun DirectDosingScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 14.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -1270,18 +1459,26 @@ fun PartialDosingScreen(
     val volumeFocusRequester = remember { FocusRequester() }
     val partsFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    var canVolumBeFocused by remember { mutableStateOf(false) }
+    var canPartsBeFocused by remember { mutableStateOf(false) }
 
     // Управляем фокусом в зависимости от активного поля
     LaunchedEffect(isVolumeFocused) {
         if (isVolumeFocused) {
+            canVolumBeFocused = true
             volumeFocusRequester.requestFocus()
+            delay(80)
             keyboardController?.show()
         }
     }
 
     LaunchedEffect(isPartsFocused) {
         if (isPartsFocused) {
+            canPartsBeFocused = true
             partsFocusRequester.requestFocus()
+            delay(80)
             keyboardController?.show()
         }
     }
@@ -1320,18 +1517,21 @@ fun PartialDosingScreen(
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                Card(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    border = CardDefaults.outlinedCardBorder().copy(
-                        width = if (isVolumeFocused) 2.dp else 1.dp
-                    )
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if(isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if(isVolumeFocused) 2.dp else 1.dp,
+                            color = if(isVolumeFocused) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                 ) {
                     BasicTextField(
                         value = volume,
@@ -1343,8 +1543,18 @@ fun PartialDosingScreen(
                             .fillMaxWidth()
                             .height(60.dp)
                             .focusRequester(volumeFocusRequester)
+                            .focusProperties{canFocus = canVolumBeFocused}
                             .onFocusChanged { focusState ->
                                 onFocusChange("partial_volume", focusState.isFocused)
+                                if(!isVolumeFocused) canVolumBeFocused = false
+                            }
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        event.changes.forEach { it.consumeAllChanges() }
+                                    }
+                                }
                             },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
@@ -1354,7 +1564,6 @@ fun PartialDosingScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 keyboardController?.hide()
-                                onFocusChange("partial_volume", false)
                             }
                         ),
                         textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1397,18 +1606,21 @@ fun PartialDosingScreen(
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                Card(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isPartsFocused) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    border = CardDefaults.outlinedCardBorder().copy(
-                        width = if (isPartsFocused) 2.dp else 1.dp
-                    )
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if(isPartsFocused) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if(isPartsFocused) 2.dp else 1.dp,
+                            color = if(isPartsFocused) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                 ) {
                     BasicTextField(
                         value = parts,
@@ -1420,8 +1632,18 @@ fun PartialDosingScreen(
                             .fillMaxWidth()
                             .height(60.dp)
                             .focusRequester(partsFocusRequester)
+                            .focusProperties{ canFocus = canPartsBeFocused}
                             .onFocusChanged { focusState ->
                                 onFocusChange("partial_parts", focusState.isFocused)
+                                if(!isPartsFocused) canPartsBeFocused = false
+                            }
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        event.changes.forEach { it.consumeAllChanges() }
+                                    }
+                                }
                             },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
@@ -1431,7 +1653,6 @@ fun PartialDosingScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 keyboardController?.hide()
-                                onFocusChange("partial_parts", false)
                             }
                         ),
                         textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1475,7 +1696,8 @@ fun PartialDosingScreen(
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    .clickable{ },
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant
                 )
@@ -1489,7 +1711,7 @@ fun PartialDosingScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 14.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -1512,18 +1734,26 @@ fun PartialFixedCollectionScreen(
     val volumeFocusRequester = remember { FocusRequester() }
     val partsFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    var canVolumBeFocused by remember { mutableStateOf(false) }
+    var canPartsBeFocused by remember { mutableStateOf(false) }
 
     // Управляем фокусом в зависимости от активного поля
     LaunchedEffect(isVolumeFocused) {
         if (isVolumeFocused) {
+            canVolumBeFocused = true
             volumeFocusRequester.requestFocus()
+            delay(80)
             keyboardController?.show()
         }
     }
 
     LaunchedEffect(isPartsFocused) {
         if (isPartsFocused) {
+            canPartsBeFocused = true
             partsFocusRequester.requestFocus()
+            delay(80)
             keyboardController?.show()
         }
     }
@@ -1562,18 +1792,21 @@ fun PartialFixedCollectionScreen(
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                Card(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    border = CardDefaults.outlinedCardBorder().copy(
-                        width = if (isVolumeFocused) 2.dp else 1.dp
-                    )
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if(isVolumeFocused) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if(isVolumeFocused) 2.dp else 1.dp,
+                            color = if(isVolumeFocused) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                 ) {
                     BasicTextField(
                         value = volume,
@@ -1585,8 +1818,18 @@ fun PartialFixedCollectionScreen(
                             .fillMaxWidth()
                             .height(60.dp)
                             .focusRequester(volumeFocusRequester)
+                            .focusProperties{ canFocus = canVolumBeFocused}
                             .onFocusChanged { focusState ->
                                 onFocusChange("fixed_volume", focusState.isFocused)
+                                if(!isVolumeFocused) canVolumBeFocused = false
+                            }
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        event.changes.forEach { it.consumeAllChanges() }
+                                    }
+                                }
                             },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
@@ -1596,7 +1839,6 @@ fun PartialFixedCollectionScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 keyboardController?.hide()
-                                onFocusChange("fixed_volume", false)
                             }
                         ),
                         textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1639,18 +1881,21 @@ fun PartialFixedCollectionScreen(
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
-                Card(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isPartsFocused) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                    border = CardDefaults.outlinedCardBorder().copy(
-                        width = if (isPartsFocused) 2.dp else 1.dp
-                    )
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if(isPartsFocused) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
+                        .border(
+                            width = if(isPartsFocused) 2.dp else 1.dp,
+                            color = if(isPartsFocused) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outline,
+                            shape = RoundedCornerShape(8.dp)
+                        )
                 ) {
                     BasicTextField(
                         value = parts,
@@ -1662,8 +1907,18 @@ fun PartialFixedCollectionScreen(
                             .fillMaxWidth()
                             .height(60.dp)
                             .focusRequester(partsFocusRequester)
+                            .focusProperties{ canFocus = canPartsBeFocused}
                             .onFocusChanged { focusState ->
                                 onFocusChange("fixed_parts", focusState.isFocused)
+                                if(!isPartsFocused) canPartsBeFocused = false
+                            }
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        event.changes.forEach { it.consumeAllChanges() }
+                                    }
+                                }
                             },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
@@ -1673,7 +1928,6 @@ fun PartialFixedCollectionScreen(
                         keyboardActions = KeyboardActions(
                             onDone = {
                                 keyboardController?.hide()
-                                onFocusChange("fixed_parts", false)
                             }
                         ),
                         textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1731,7 +1985,7 @@ fun PartialFixedCollectionScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 14.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -1744,29 +1998,36 @@ fun FreeCollectionScreen(
     values: List<String>,
     onValueChange: (Int, String) -> Unit,
     connectionState: ConnectionState,
-    isFieldFocused: (Int) -> Boolean,
+    activeFieldIndex: Int,
     onFocusChange: (Int, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val focusRequesters = remember { List(5) { FocusRequester() } }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
-    // Управляем фокусом в зависимости от активного поля
-    LaunchedEffect(isFieldFocused) {
-        (0..4).forEach { index ->
-            if (isFieldFocused(index)) {
-                focusRequesters[index].requestFocus()
-                keyboardController?.show()
-            }
+    // ←←← Вот что ты просил: отдельное состояние для КАЖДОГО поля
+    val canBeFocusedList = remember { List(5) { mutableStateOf(false) } }
+
+    // Запускаем фокус только для нужного поля
+    LaunchedEffect(activeFieldIndex) {
+        if (activeFieldIndex in 0..4) {
+            canBeFocusedList[activeFieldIndex].value = true
+            focusRequesters[activeFieldIndex].requestFocus()
+            delay(80)                    // можно подкрутить 60–120
+            keyboardController?.show()
+        } else {
+            // Сбрасываем все
+            canBeFocusedList.forEach { it.value = false }
+            keyboardController?.hide()
+            focusManager.clearFocus(true)
         }
     }
 
     Column(
-        modifier = modifier
-            .padding(16.dp),
+        modifier = modifier.padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Заголовок
         Text(
             text = "Свободный забор",
             style = MaterialTheme.typography.titleLarge,
@@ -1775,7 +2036,6 @@ fun FreeCollectionScreen(
             modifier = Modifier.padding(bottom = 24.dp)
         )
 
-        // Пять полей ввода
         Column(
             horizontalAlignment = Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1784,9 +2044,7 @@ fun FreeCollectionScreen(
                 .padding(horizontal = 16.dp)
         ) {
             values.forEachIndexed { index, value ->
-                Column(
-                    horizontalAlignment = Alignment.Start
-                ) {
+                Column(horizontalAlignment = Alignment.Start) {
                     Text(
                         text = "Объем ${index + 1} (мл)",
                         style = MaterialTheme.typography.bodyMedium,
@@ -1795,18 +2053,21 @@ fun FreeCollectionScreen(
                         modifier = Modifier.padding(bottom = 8.dp)
                     )
 
-                    Card(
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(60.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (isFieldFocused(index)) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                        border = CardDefaults.outlinedCardBorder().copy(
-                            width = if (isFieldFocused(index)) 2.dp else 1.dp
-                        )
+                            .height(60.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                if (activeFieldIndex == index) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .border(
+                                width = if (activeFieldIndex == index) 2.dp else 1.dp,
+                                color = if (activeFieldIndex == index) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                                shape = RoundedCornerShape(8.dp)
+                            )
                     ) {
                         BasicTextField(
                             value = value,
@@ -1818,18 +2079,32 @@ fun FreeCollectionScreen(
                                 .fillMaxWidth()
                                 .height(60.dp)
                                 .focusRequester(focusRequesters[index])
+                                .focusProperties {
+                                    canFocus = canBeFocusedList[index].value
+                                }
+                                .pointerInput(Unit) {
+                                    awaitPointerEventScope {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            event.changes.forEach { it.consumeAllChanges() }
+                                        }
+                                    }
+                                }
                                 .onFocusChanged { focusState ->
                                     onFocusChange(index, focusState.isFocused)
+                                    if (!focusState.isFocused) {
+                                        canBeFocusedList[index].value = false
+                                    }
                                 },
+                            readOnly = false,
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Number,
-                                imeAction = ImeAction.Done
+                                imeAction = ImeAction.Done   // или Done для последнего поля
                             ),
                             keyboardActions = KeyboardActions(
                                 onDone = {
                                     keyboardController?.hide()
-                                    onFocusChange(index, false)
                                 }
                             ),
                             textStyle = MaterialTheme.typography.titleLarge.copy(
@@ -1888,7 +2163,7 @@ fun FreeCollectionScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 14.sp,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -2084,6 +2359,206 @@ fun MainControlPanel(
 }
 
 @Composable
+fun DirectDosingControlPanel(
+    onBackClick: () -> Unit,
+    onEnterClick: () -> Unit,
+    onStartClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Кнопка НАЗАД
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+
+            // Кнопка ВЫПОЛНИТЬ (переход по полям)
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = "Выполнить",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
+            )
+
+            // Кнопка СТАРТ
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Старт",
+                onClick = onStartClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
+fun PartialDosingControlPanel(
+    onBackClick: () -> Unit,
+    onEnterClick: () -> Unit,
+    onStartClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Кнопка НАЗАД
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+
+            // Кнопка ВЫПОЛНИТЬ (переход по полям)
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Вперед",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
+            )
+
+            // Кнопка СТАРТ
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = "Старт",
+                onClick = onStartClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
+fun PartialFixedControlPanel(
+    onBackClick: () -> Unit,
+    onEnterClick: () -> Unit,
+    onStartClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Кнопка НАЗАД
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+
+            // Кнопка ВЫПОЛНИТЬ (переход по полям)
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Вперед",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
+            )
+
+            // Кнопка СТАРТ
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Старт",
+                onClick = onStartClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
+fun FreeCollectionControlPanel(
+    onBackClick: () -> Unit,
+    onEnterClick: () -> Unit,
+    onStartClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Кнопка НАЗАД
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+
+            // Кнопка ВЫПОЛНИТЬ (переход по полям)
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Вперед",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
+            )
+
+            // Кнопка СТАРТ
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = "Старт",
+                onClick = onStartClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
 fun StrokeSpeedControlPanelWithArrows(
     onBackClick: () -> Unit,
     onUpClick: () -> Unit,
@@ -2126,166 +2601,6 @@ fun StrokeSpeedControlPanelWithArrows(
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
                 label = "Принять",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
-            )
-        }
-    }
-}
-
-@Composable
-fun DirectDosingControlPanel(
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Левая сторона - кнопка НАЗАД
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_back,
-                label = "Назад",
-                onClick = onBackClick,
-                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                iconColor = MaterialTheme.colorScheme.error
-            )
-
-            // Правая сторона - кнопка ВЫПОЛНИТЬ
-            SimpleControlButton(
-                iconResId = R.drawable.check_circle,
-                label = "Выполнить",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
-            )
-        }
-    }
-}
-
-@Composable
-fun PartialDosingControlPanel(
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Левая сторона - кнопка НАЗАД
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_back,
-                label = "Назад",
-                onClick = onBackClick,
-                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                iconColor = MaterialTheme.colorScheme.error
-            )
-
-            // Правая сторона - кнопка ВЫПОЛНИТЬ
-            SimpleControlButton(
-                iconResId = R.drawable.check_circle,
-                label = "Выполнить",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
-            )
-        }
-    }
-}
-
-@Composable
-fun PartialFixedControlPanel(
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Левая сторона - кнопка НАЗАД
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_back,
-                label = "Назад",
-                onClick = onBackClick,
-                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                iconColor = MaterialTheme.colorScheme.error
-            )
-
-            // Правая сторона - кнопка ВЫПОЛНИТЬ
-            SimpleControlButton(
-                iconResId = R.drawable.check_circle,
-                label = "Выполнить",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
-            )
-        }
-    }
-}
-
-@Composable
-fun FreeCollectionControlPanel(
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Левая сторона - кнопка НАЗАД
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_back,
-                label = "Назад",
-                onClick = onBackClick,
-                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
-                iconColor = MaterialTheme.colorScheme.error
-            )
-
-            // Правая сторона - кнопка ВЫПОЛНИТЬ
-            SimpleControlButton(
-                iconResId = R.drawable.check_circle,
-                label = "Выполнить",
                 onClick = onAcceptClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                 iconColor = Color(0xFF4CAF50)
@@ -3253,7 +3568,7 @@ fun DeviceStatusCard(
                 )
 
                 Text(
-                    text = deviceAddress,
+                    text = "Дозатор УУППО",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 14.sp,
@@ -3368,25 +3683,21 @@ private fun getFunctionsList(): List<DeviceFunction> {
         DeviceFunction(
             id = "direct_dosing",
             name = "Прямое дозирование",
-            description = "Прямая подача реагента",
             iconResId = R.drawable.science
         ),
         DeviceFunction(
             id = "partial_dosing",
             name = "Частичное дозирование",
-            description = "Дозирование по частям",
             iconResId = R.drawable.timeline
         ),
         DeviceFunction(
             id = "partial_fixed_collection",
             name = "Частичный фиксированный забор",
-            description = "Забор фиксированного объема",
             iconResId = R.drawable.rotate
         ),
         DeviceFunction(
             id = "free_collection",
             name = "Свободный забор",
-            description = "Ручной забор реагента",
             iconResId = R.drawable.assignment
         )
     )

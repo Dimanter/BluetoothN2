@@ -51,7 +51,14 @@ data class BluetoothUIState(
     val scanFilters: ScanFilters = ScanFilters(),
     val isRefreshing: Boolean = false,
     val selectedDeviceAddress: String? = null,
-    val deviceToNavigate: String? = null // добавлено для навигации
+    val commandResult: String? = null,
+    val receivedData: String = "",
+    val lastCommandResponse: String? = null,
+    val isWaitingForResponse: Boolean = false,
+    val autoConnect: Boolean = true,
+    val debugLog: List<String> = emptyList(),
+    val isReceivingData: Boolean = false,
+    val bytesReceived: Int = 0
 )
 
 class BluetoothViewModel(application: Application) : AndroidViewModel(application) {
@@ -60,12 +67,24 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
     private val _uiState = MutableStateFlow(BluetoothUIState())
     val uiState: StateFlow<BluetoothUIState> = _uiState.asStateFlow()
 
+    private var deviceAddress: String = ""
+    private var responseTimerJob: Job? = null
+    private var autoConnectJob: Job? = null
+    private var dataMonitoringJob: Job? = null
+
+    private var totalBytesReceived = 0
+
     private var scanningJob: Job? = null
     private var refreshJob: Job? = null
     private val scanDuration = 30_000L // 30 секунд
 
     // Карта состояний подключений для всех устройств
     private val deviceConnectionStates = mutableMapOf<String, ConnectionState>()
+
+    fun setSelectedDevice(address: String?) {
+        _uiState.update { it.copy(selectedDeviceAddress = address) }
+    }
+
 
     init {
         checkPermissions()
@@ -417,6 +436,64 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun sendCommand(command: String) {
+        viewModelScope.launch {
+            val cleanCommand = command.trim()
+            if (cleanCommand.isEmpty()) return@launch
+
+            _uiState.update {
+                it.copy(
+                    errorMessage = null,
+                    lastCommandResponse = null,
+                    isWaitingForResponse = true,
+                    successMessage = "Отправка команды...",
+                    debugLog = it.debugLog + "Sending: $cleanCommand"
+                )
+            }
+
+            // Таймаут ожидания ответа
+            responseTimerJob = viewModelScope.launch {
+                delay(5000)
+                if (_uiState.value.isWaitingForResponse) {
+                    _uiState.update {
+                        it.copy(
+                            isWaitingForResponse = false,
+                            errorMessage = "Таймаут ожидания ответа"
+                        )
+                    }
+                }
+            }
+
+            try {
+                val result = repository.sendData(deviceAddress, cleanCommand)
+                if (result.isSuccess) {
+                    _uiState.update {
+                        it.copy(
+                            successMessage = "Команда отправлена",
+                            debugLog = it.debugLog + "Command sent"
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isWaitingForResponse = false,
+                            errorMessage = "Ошибка отправки"
+                        )
+                    }
+                    responseTimerJob?.cancel()
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isWaitingForResponse = false,
+                        errorMessage = "Ошибка отправки: ${e.message}"
+                    )
+                }
+                responseTimerJob?.cancel()
+            }
+        }
+    }
+
     fun connectToDevice(device: BleDeviceModel) {
         if (!hasBluetoothPermissions()) {
             _uiState.update {
@@ -447,11 +524,8 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val result = repository.connectToDevice(device.address)
             if (result.isSuccess) {
-
-                // Устанавливаем флаг навигации
-                _uiState.update {
-                    it.copy(deviceToNavigate = device.address)
-                }
+                // Подключение успешно, но навигация теперь не отсюда
+                // Убираем установку deviceToNavigate
             } else {
                 val error = result.exceptionOrNull()
                 _uiState.update {
@@ -461,12 +535,6 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }
-        }
-    }
-
-    fun selectDevice(deviceAddress: String) {
-        _uiState.update {
-            it.copy(selectedDeviceAddress = deviceAddress)
         }
     }
 
@@ -515,10 +583,6 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun clearSuccessMessage() {
         _uiState.update { it.copy(successMessage = null) }
-    }
-
-    fun clearNavigation() {
-        _uiState.update { it.copy(deviceToNavigate = null) }
     }
 
     fun refreshBluetoothState() {
