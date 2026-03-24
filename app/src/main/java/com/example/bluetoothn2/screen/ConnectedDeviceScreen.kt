@@ -107,7 +107,9 @@ fun ConnectedDeviceScreen(
     var partialDosingFocus by remember { mutableStateOf(-1) } // -1, 0 (объем), 1 (части)
     var partialFixedFocus by remember { mutableStateOf(-1) }  // -1, 0 (объем), 1 (части)
     var freeCollectionFocus by remember { mutableStateOf(-1) } // -1, 0..4
+
     var notEmpty  by remember { mutableStateOf(false) }
+    var showPowerOffDialog by remember { mutableStateOf(false) }
 
     // Получаем текущий выбранный индекс в зависимости от экрана
     val currentSelectedIndex = when (currentScreen) {
@@ -528,13 +530,7 @@ fun ConnectedDeviceScreen(
                                                 viewModel.sendCommand("BLUETOOTH_MENU\r\n")
                                             }
                                             3 -> {
-                                                viewModel.sendCommand("POWER_OFF\r\n")
-                                                coroutineScope.launch {
-                                                    delay(500)
-                                                    bluetoothViewModel?.disconnectFromDevice(deviceAddress)
-                                                    viewModel.cleanup()
-                                                    onBack()
-                                                }
+                                                showPowerOffDialog = true
                                             }
                                         }
                                         closeKeyboard()
@@ -934,6 +930,43 @@ fun ConnectedDeviceScreen(
             }
         }
     }
+    // Диалог подтверждения выключения
+    if (showPowerOffDialog) {
+        AlertDialog(
+            onDismissRequest = { showPowerOffDialog = false },
+            title = { Text("Подтверждение") },
+            text = { Text("Хотите выключить?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        // Отправляем команду Enter
+                        viewModel.sendCommand("Enter:\r\n")
+                        showPowerOffDialog = false
+                        // Выполняем отключение и выход
+                        coroutineScope.launch {
+                            delay(500)
+                            bluetoothViewModel?.disconnectFromDevice(deviceAddress)
+                            viewModel.cleanup()
+                            onBack()
+                        }
+                    }
+                ) {
+                    Text("Да")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        // Отправляем команду Back
+                        viewModel.sendCommand("Back:\r\n")
+                        showPowerOffDialog = false
+                    }
+                ) {
+                    Text("Нет")
+                }
+            }
+        )
+    }
 }
 
 // Типы экранов устройства
@@ -963,7 +996,6 @@ data class DeviceFunction(
 data class SystemSetting(
     val id: String,
     val name: String,
-    val description: String,
     val iconResId: Int
 )
 
@@ -2276,7 +2308,7 @@ fun SystemSettingItem(
                 )
 
                 Text(
-                    text = setting.description,
+                    text = "",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 18.sp
@@ -2348,7 +2380,7 @@ fun MainControlPanel(
                 // Кнопка ПРИНЯТЬ
                 SimpleControlButton(
                     iconResId = R.drawable.check_circle,
-                    label = "Принять",
+                    label = "Ввод",
                     onClick = onAcceptClick,
                     backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                     iconColor = Color(0xFF4CAF50)
@@ -2390,7 +2422,7 @@ fun DirectDosingControlPanel(
             // Кнопка ВЫПОЛНИТЬ (переход по полям)
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
-                label = "Выполнить",
+                label = "Ввод",
                 onClick = onEnterClick,
                 backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
                 iconColor = Color(0xFF2196F3)
@@ -2398,7 +2430,7 @@ fun DirectDosingControlPanel(
 
             // Кнопка СТАРТ
             SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
+                iconResId = R.drawable.start,
                 label = "Старт",
                 onClick = onStartClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
@@ -2439,8 +2471,8 @@ fun PartialDosingControlPanel(
 
             // Кнопка ВЫПОЛНИТЬ (переход по полям)
             SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
-                label = "Вперед",
+                iconResId = R.drawable.check_circle,
+                label = "Ввод",
                 onClick = onEnterClick,
                 backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
                 iconColor = Color(0xFF2196F3)
@@ -2448,7 +2480,7 @@ fun PartialDosingControlPanel(
 
             // Кнопка СТАРТ
             SimpleControlButton(
-                iconResId = R.drawable.check_circle,
+                iconResId = R.drawable.start,
                 label = "Старт",
                 onClick = onStartClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
@@ -2489,8 +2521,8 @@ fun PartialFixedControlPanel(
 
             // Кнопка ВЫПОЛНИТЬ (переход по полям)
             SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
-                label = "Вперед",
+                iconResId = R.drawable.check_circle,
+                label = "Ввод",
                 onClick = onEnterClick,
                 backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
                 iconColor = Color(0xFF2196F3)
@@ -2498,7 +2530,7 @@ fun PartialFixedControlPanel(
 
             // Кнопка СТАРТ
             SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
+                iconResId = R.drawable.start,
                 label = "Старт",
                 onClick = onStartClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
@@ -2539,8 +2571,8 @@ fun FreeCollectionControlPanel(
 
             // Кнопка ВЫПОЛНИТЬ (переход по полям)
             SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
-                label = "Вперед",
+                iconResId = R.drawable.check_circle,
+                label = "Ввод",
                 onClick = onEnterClick,
                 backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
                 iconColor = Color(0xFF2196F3)
@@ -2548,7 +2580,7 @@ fun FreeCollectionControlPanel(
 
             // Кнопка СТАРТ
             SimpleControlButton(
-                iconResId = R.drawable.check_circle,
+                iconResId = R.drawable.start,
                 label = "Старт",
                 onClick = onStartClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
@@ -2600,7 +2632,7 @@ fun StrokeSpeedControlPanelWithArrows(
             // Кнопка ПРИНЯТЬ
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
-                label = "Принять",
+                label = "Ввод",
                 onClick = onAcceptClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                 iconColor = Color(0xFF4CAF50)
@@ -2721,7 +2753,7 @@ fun CoefficientCorrectionControlPanel(
                 // Кнопка ВЫПОЛНИТЬ
                 SimpleControlButton(
                     iconResId = R.drawable.check_circle,
-                    label = "Выполнить",
+                    label = "Ввод",
                     onClick = onAcceptClick,
                     backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                     iconColor = Color(0xFF4CAF50)
@@ -3634,7 +3666,7 @@ fun SystemSettingControlPanel(
             // Правая сторона - кнопка ПРИМЕНИТЬ
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
-                label = "Применить",
+                label = "Ввод",
                 onClick = onAcceptClick,
                 backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
                 iconColor = Color(0xFF4CAF50)
@@ -3708,31 +3740,26 @@ private fun getSystemSettingsList(): List<SystemSetting> {
         SystemSetting(
             id = "contrast_reduction",
             name = "Снижение контрастности",
-            description = "Настройка времени снижения контраста",
             iconResId = R.drawable.contrast
         ),
         SystemSetting(
             id = "sleep_mode",
             name = "Спящий режим",
-            description = "Настройка времени перехода в спящий режим",
             iconResId = R.drawable.sleep
         ),
         SystemSetting(
             id = "stroke_speed",
             name = "Скорость штока",
-            description = "Выбор скорости работы штока",
             iconResId = R.drawable.speed
         ),
         SystemSetting(
             id = "max_volume",
             name = "Максимальный объем забора",
-            description = "Настройка максимального объема",
             iconResId = R.drawable.volume
         ),
         SystemSetting(
             id = "coefficient_correction",
             name = "Коррекция коэффициентов",
-            description = "Вычисление поправочных коэффициентов",
             iconResId = R.drawable.calculate
         )
     )
