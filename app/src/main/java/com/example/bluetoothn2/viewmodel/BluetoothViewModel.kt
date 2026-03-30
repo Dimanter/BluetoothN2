@@ -105,7 +105,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                             _uiState.update {
                                 it.copy(
                                     connectedDeviceAddress = deviceAddress,
-                                    successMessage = "Устройство подключено"
+                                    //successMessage = "Устройство подключено"
                                 )
                             }
                         }
@@ -114,7 +114,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                                 _uiState.update {
                                     it.copy(
                                         connectedDeviceAddress = null,
-                                        successMessage = "Устройство отключено"
+                                        //successMessage = "Устройство отключено"
                                     )
                                 }
                             }
@@ -328,7 +328,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 isScanning = true,
                 errorMessage = null,
-                successMessage = "Сканирование начато",
+                //successMessage = "Сканирование начато",
                 scanProgress = 0f
             )
         }
@@ -378,7 +378,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 isScanning = true,
                 errorMessage = null,
-                successMessage = "Быстрое сканирование начато",
+                //successMessage = "Быстрое сканирование начато",
                 scanProgress = 0f
             )
         }
@@ -446,7 +446,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                     errorMessage = null,
                     lastCommandResponse = null,
                     isWaitingForResponse = true,
-                    successMessage = "Отправка команды...",
+                    //successMessage = "Отправка команды...",
                     debugLog = it.debugLog + "Sending: $cleanCommand"
                 )
             }
@@ -469,7 +469,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                 if (result.isSuccess) {
                     _uiState.update {
                         it.copy(
-                            successMessage = "Команда отправлена",
+                            //successMessage = "Команда отправлена",
                             debugLog = it.debugLog + "Command sent"
                         )
                     }
@@ -517,7 +517,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
             it.copy(
                 connectingDeviceAddress = device.address,
                 selectedDeviceAddress = device.address,
-                successMessage = "Подключение к ${device.name}..."
+                //successMessage = "Подключение к ${device.name}..."
             )
         }
 
@@ -548,7 +548,7 @@ class BluetoothViewModel(application: Application) : AndroidViewModel(applicatio
                         it.copy(
                             connectedDeviceAddress = null,
                             selectedDeviceAddress = null,
-                            successMessage = "Устройство отключено"
+                            //successMessage = "Устройство отключено"
                         )
                     }
                 }

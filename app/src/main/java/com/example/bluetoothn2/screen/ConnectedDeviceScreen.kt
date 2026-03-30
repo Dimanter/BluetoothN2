@@ -12,11 +12,13 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -262,13 +264,19 @@ fun ConnectedDeviceScreen(
                     deviceName = uiState.device?.name ?: "Устройство",
                     connectionState = uiState.connectionState,
                     deviceAddress = deviceAddress,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.FUNCTIONS -> FunctionsScreen(
                     selectedIndex = functionsSelectedIndex,
                     connectionState = uiState.connectionState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.DIRECT_DOSING -> DirectDosingScreen(
@@ -286,7 +294,10 @@ fun ConnectedDeviceScreen(
                             currentFocusFieldId = null
                         }
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.PARTIAL_DOSING -> PartialDosingScreen(
@@ -321,7 +332,10 @@ fun ConnectedDeviceScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.PARTIAL_FIXED_COLLECTION -> PartialFixedCollectionScreen(
@@ -356,7 +370,10 @@ fun ConnectedDeviceScreen(
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.FREE_COLLECTION -> FreeCollectionScreen(
@@ -378,13 +395,19 @@ fun ConnectedDeviceScreen(
                             currentFocusFieldId = null
                         }
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.SYSTEM_SETTINGS -> SystemSettingsScreen(
                     selectedIndex = systemSettingsSelectedIndex,
                     connectionState = uiState.connectionState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.CONTRAST_REDUCTION -> ContrastReductionScreen(
@@ -396,7 +419,10 @@ fun ConnectedDeviceScreen(
                         hasTextFieldFocus = focused
                         currentFocusFieldId = if (focused) "contrast" else null
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.SLEEP_MODE -> SleepModeScreen(
@@ -408,14 +434,20 @@ fun ConnectedDeviceScreen(
                         hasTextFieldFocus = focused
                         currentFocusFieldId = if (focused) "sleep" else null
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.STROKE_SPEED -> StrokeSpeedScreen(
                     selectedIndex = strokeSpeedIndex,
                     onSelectedIndexChange = { strokeSpeedIndex = it },
                     connectionState = uiState.connectionState,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.MAX_VOLUME -> MaxVolumeScreen(
@@ -427,7 +459,10 @@ fun ConnectedDeviceScreen(
                         hasTextFieldFocus = focused
                         currentFocusFieldId = if (focused) "max_volume" else null
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
 
                 DeviceScreen.COEFFICIENT_CORRECTION -> CoefficientCorrectionScreen(
@@ -448,7 +483,10 @@ fun ConnectedDeviceScreen(
                         hasTextFieldFocus = focused
                         currentFocusFieldId = if (focused) "coefficient_$index" else null
                     },
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
                 )
             }
 
@@ -662,13 +700,13 @@ fun ConnectedDeviceScreen(
                                 val parts = partialDosingParts.toIntOrNull() ?: 5
                                 if (partialDosingFocus > -1) {
                                     if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        viewModel.sendCommand("BACK:$$volume:$parts\r\n")
+                                        viewModel.sendCommand("BACK:$volume:$parts\r\n")
                                     }
                                     focusManager.clearFocus(true)
                                     partialDosingFocus = -1
                                 } else {
                                     if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        viewModel.sendCommand("BACK:$$volume:$parts\r\n")
+                                        viewModel.sendCommand("BACK:$volume:$parts\r\n")
                                     }
                                     withNavigationDebounce {
                                         currentScreen = DeviceScreen.FUNCTIONS
@@ -742,17 +780,17 @@ fun ConnectedDeviceScreen(
                                 viewModel.sendCommand("ENTER:\r\n")
                             }
                             // "Выполнить" – переход по полям
-                                if (partialFixedFocus == -1) {
-                                    partialFixedFocus = 0
-                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
-                                } else if (partialFixedFocus < 1) {
-                                    partialFixedFocus++
-                                    coroutineScope.launch { delay(100); openKeyboard("partial_parts") }
-                                }
-                                else if (partialFixedFocus == 1) {
-                                    partialFixedFocus = 0
-                                    coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
-                                }
+                            if (partialFixedFocus == -1) {
+                                partialFixedFocus = 0
+                                coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                            } else if (partialFixedFocus < 1) {
+                                partialFixedFocus++
+                                coroutineScope.launch { delay(100); openKeyboard("partial_parts") }
+                            }
+                            else if (partialFixedFocus == 1) {
+                                partialFixedFocus = 0
+                                coroutineScope.launch { delay(100); openKeyboard("partial_volume") }
+                            }
                         },
                         onStartClick = {
                             if (uiState.connectionState == ConnectionState.CONNECTED) {
@@ -940,7 +978,7 @@ fun ConnectedDeviceScreen(
                 TextButton(
                     onClick = {
                         // Отправляем команду Enter
-                        viewModel.sendCommand("Enter:\r\n")
+                        viewModel.sendCommand("YES:\r\n")
                         showPowerOffDialog = false
                         // Выполняем отключение и выход
                         coroutineScope.launch {
@@ -958,7 +996,7 @@ fun ConnectedDeviceScreen(
                 TextButton(
                     onClick = {
                         // Отправляем команду Back
-                        viewModel.sendCommand("Back:\r\n")
+                        viewModel.sendCommand("NO:\r\n")
                         showPowerOffDialog = false
                     }
                 ) {
@@ -1366,11 +1404,11 @@ fun DirectDosingScreen(
                         else MaterialTheme.colorScheme.surfaceVariant
                     )
                     .border(
-                            width = if(isFocused) 2.dp else 1.dp,
+                        width = if(isFocused) 2.dp else 1.dp,
                         color = if(isFocused) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.outline,
                         shape = RoundedCornerShape(8.dp)
-                            )
+                    )
             ) {
                 BasicTextField(
                     value = value,

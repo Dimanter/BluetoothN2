@@ -107,7 +107,7 @@ fun MainScreen(
                     // Кнопка версии
                     IconButton(
                         onClick = {
-                            Toast.makeText(context, "Версия 1.240326.1515", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Версия 1.250326.925", Toast.LENGTH_SHORT).show()
                         }
                     ) {
                         Icon(

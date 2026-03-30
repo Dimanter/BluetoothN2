@@ -111,7 +111,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                             ConnectionState.CONNECTED -> {
                                 _uiState.update {
                                     it.copy(
-                                        successMessage = "Устройство подключено"
+                                        //successMessage = "Устройство подключено"
                                     )
                                 }
                                 // Очищаем старые данные при новом подключении
@@ -158,7 +158,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                                 it.copy(
                                     lastCommandResponse = data,
                                     isWaitingForResponse = false,
-                                    successMessage = "Получен ответ"
+                                    //successMessage = "Получен ответ"
                                 )
                             }
                             responseTimerJob?.cancel()
@@ -227,7 +227,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                 it.copy(
                     isReconnecting = true,
                     errorMessage = null,
-                    successMessage = "Подключение..."
+                    //successMessage = "Подключение..."
                 )
             }
 
@@ -259,7 +259,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
             _uiState.update {
                 it.copy(
                     errorMessage = null,
-                    successMessage = "Отключение..."
+                    //successMessage = "Отключение..."
                 )
             }
 
@@ -269,7 +269,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                     _uiState.update {
                         it.copy(
                             connectionState = ConnectionState.DISCONNECTED,
-                            successMessage = "Устройство отключено"
+                            //successMessage = "Устройство отключено"
                         )
                     }
                 }
@@ -289,7 +289,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                     errorMessage = null,
                     lastCommandResponse = null,
                     isWaitingForResponse = true,
-                    successMessage = "Отправка команды...",
+                    //successMessage = "Отправка команды...",
                     debugLog = it.debugLog + "Sending: $cleanCommand"
                 )
             }
@@ -313,7 +313,7 @@ class ConnectedDeviceViewModel(application: Application) : AndroidViewModel(appl
                     addDebugLog("Command sent: $cleanCommand")
                     _uiState.update {
                         it.copy(
-                            successMessage = "Команда отправлена",
+                            //successMessage = "Команда отправлена",
                             debugLog = it.debugLog + "Command sent"
                         )
                     }
