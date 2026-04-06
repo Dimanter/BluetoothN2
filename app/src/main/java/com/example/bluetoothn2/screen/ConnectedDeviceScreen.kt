@@ -2,6 +2,7 @@ package com.example.bluetoothn2.screen
 
 import android.R.attr.onClick
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -67,6 +68,7 @@ fun ConnectedDeviceScreen(
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
+
     // Состояние для текущего экрана
     var currentScreen by remember { mutableStateOf<DeviceScreen>(DeviceScreen.MAIN) }
 
@@ -77,11 +79,15 @@ fun ConnectedDeviceScreen(
     var contrastReductionValue by remember { mutableStateOf("0") }
     var sleepModeValue by remember { mutableStateOf("0") }
     var strokeSpeedIndex by remember { mutableStateOf(1) } // 0: высокая, 1: средняя, 2: низкая
+    var colorSchemeIndex by remember { mutableStateOf(0) } // 0: темная, 1: светлая
     var maxVolumeValue by remember { mutableStateOf("0") }
     var coefficientD6Value1 by remember { mutableStateOf("0") }
     var coefficientD6Value2 by remember { mutableStateOf("0") }
     var coefficientRealValue1 by remember { mutableStateOf("0") }
     var coefficientRealValue2 by remember { mutableStateOf("0") }
+    var prevMainIndex  by remember { mutableStateOf(0) }
+    var prevFunctionsIndex by remember { mutableStateOf(0) }
+    var prevSettingsIndex by remember { mutableStateOf(0) }
 
     // Индекс активного поля для экранов ввода
     var activeInputFieldIndex by remember { mutableStateOf(0) }
@@ -110,7 +116,7 @@ fun ConnectedDeviceScreen(
     var partialFixedFocus by remember { mutableStateOf(-1) }  // -1, 0 (объем), 1 (части)
     var freeCollectionFocus by remember { mutableStateOf(-1) } // -1, 0..4
 
-    var notEmpty  by remember { mutableStateOf(false) }
+    var notEmpty by remember { mutableStateOf(false) }
     var showPowerOffDialog by remember { mutableStateOf(false) }
 
     // Получаем текущий выбранный индекс в зависимости от экрана
@@ -133,6 +139,7 @@ fun ConnectedDeviceScreen(
     // Функция для отправки команд навигации
     fun sendNavigationCommand(command: String) {
         if (uiState.connectionState == ConnectionState.CONNECTED) {
+            Log.i("command","$command")
             viewModel.sendCommand("$command:\r\n")
         }
     }
@@ -150,6 +157,139 @@ fun ConnectedDeviceScreen(
         focusManager.clearFocus()
         hasTextFieldFocus = false
         currentFocusFieldId = null
+    }
+
+    // --- Обработчики нажатий на пункты меню ---
+    fun handleMainAccept(index: Int) {
+        val del: Long = 400
+        if(prevMainIndex == mainSelectedIndex) {
+            sendNavigationCommand("ENTER")
+        } else{
+            if(prevMainIndex > mainSelectedIndex){
+                for(i in mainSelectedIndex..prevMainIndex-1){
+                    sendNavigationCommand("UP")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            } else{
+                for (i in prevMainIndex..mainSelectedIndex-1) {
+                    sendNavigationCommand("DOWN")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            }
+        }
+        prevMainIndex = mainSelectedIndex
+        when (index) {
+            0 -> currentScreen = DeviceScreen.FUNCTIONS
+            1 -> currentScreen = DeviceScreen.SYSTEM_SETTINGS
+            2 -> {}
+            3 -> showPowerOffDialog = true
+        }
+        closeKeyboard()
+    }
+
+    fun handleFunctionAccept(index: Int) {
+        val del: Long = 400
+        if(prevFunctionsIndex == functionsSelectedIndex){
+            sendNavigationCommand("ENTER")
+        } else{
+            if(prevFunctionsIndex > functionsSelectedIndex){
+                for(i in functionsSelectedIndex..prevFunctionsIndex-1){
+                    sendNavigationCommand("UP")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            } else{
+                for (i in prevFunctionsIndex..functionsSelectedIndex-1) {
+                    sendNavigationCommand("DOWN")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            }
+        }
+        prevFunctionsIndex = functionsSelectedIndex
+
+        val function = getFunctionsList().getOrNull(index)
+        function?.let {
+            savedFunctionsIndex = index
+            when (it.id) {
+                "direct_dosing" -> {
+                    currentScreen = DeviceScreen.DIRECT_DOSING
+                    directDosingFocus = -1
+                }
+                "partial_dosing" -> {
+                    currentScreen = DeviceScreen.PARTIAL_DOSING
+                    partialDosingFocus = -1
+                }
+                "partial_fixed_collection" -> {
+                    currentScreen = DeviceScreen.PARTIAL_FIXED_COLLECTION
+                    partialFixedFocus = -1
+                }
+                "free_collection" -> {
+                    currentScreen = DeviceScreen.FREE_COLLECTION
+                    freeCollectionFocus = -1
+                }
+            }
+            closeKeyboard()
+        }
+    }
+
+    fun handleSystemSettingAccept(index: Int) {
+        val del: Long = 400
+        if(prevSettingsIndex == systemSettingsSelectedIndex){
+            sendNavigationCommand("ENTER")
+        } else{
+            if(prevSettingsIndex > systemSettingsSelectedIndex){
+                for(i in systemSettingsSelectedIndex..prevSettingsIndex-1){
+                    sendNavigationCommand("UP")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            } else{
+                for (i in prevSettingsIndex..systemSettingsSelectedIndex-1) {
+                    sendNavigationCommand("DOWN")
+                    Thread.sleep(del)
+                }
+                sendNavigationCommand("ENTER")
+            }
+        }
+        prevSettingsIndex = systemSettingsSelectedIndex
+        val setting = getSystemSettingsList().getOrNull(index)
+        setting?.let {
+            when (it.id) {
+                "contrast_reduction" -> {
+                    currentScreen = DeviceScreen.CONTRAST_REDUCTION
+                    activeInputFieldIndex = 0
+                    coroutineScope.launch { delay(100)}
+                }
+                "sleep_mode" -> {
+                    currentScreen = DeviceScreen.SLEEP_MODE
+                    activeInputFieldIndex = 0
+                    coroutineScope.launch { delay(100)}
+                }
+                "stroke_speed" -> {
+                    currentScreen = DeviceScreen.STROKE_SPEED
+                    activeInputFieldIndex = 0
+                    closeKeyboard()
+                }
+                "color_scheme" -> {
+                    currentScreen = DeviceScreen.COLOR_SCHEME
+                    activeInputFieldIndex = 0
+                    closeKeyboard()
+                }
+                "max_volume" -> {
+                    currentScreen = DeviceScreen.MAX_VOLUME
+                    activeInputFieldIndex = 0
+                    coroutineScope.launch { delay(100)}
+                }
+                "coefficient_correction" -> {
+                    currentScreen = DeviceScreen.COEFFICIENT_CORRECTION
+                    activeInputFieldIndex = 0
+                    coroutineScope.launch { delay(100)}
+                }
+            }
+        }
     }
 
     LaunchedEffect(uiState.connectionState == ConnectionState.CONNECTED) {
@@ -226,6 +366,7 @@ fun ConnectedDeviceScreen(
                             DeviceScreen.CONTRAST_REDUCTION -> "Снижение контрастности"
                             DeviceScreen.SLEEP_MODE -> "Спящий режим"
                             DeviceScreen.STROKE_SPEED -> "Скорость штока"
+                            DeviceScreen.COLOR_SCHEME -> "Цветовая схема"
                             DeviceScreen.MAX_VOLUME -> "Максимальный объем забора"
                             DeviceScreen.COEFFICIENT_CORRECTION -> "Коррекция коэффициентов"
                         },
@@ -264,6 +405,10 @@ fun ConnectedDeviceScreen(
                     deviceName = uiState.device?.name ?: "Устройство",
                     connectionState = uiState.connectionState,
                     deviceAddress = deviceAddress,
+                    onItemClick = { index ->
+                        mainSelectedIndex = index
+                        handleMainAccept(index)
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(bottom = 80.dp)
@@ -273,6 +418,10 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.FUNCTIONS -> FunctionsScreen(
                     selectedIndex = functionsSelectedIndex,
                     connectionState = uiState.connectionState,
+                    onItemClick = { index ->
+                        functionsSelectedIndex = index
+                        handleFunctionAccept(index)
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(bottom = 80.dp)
@@ -404,6 +553,10 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.SYSTEM_SETTINGS -> SystemSettingsScreen(
                     selectedIndex = systemSettingsSelectedIndex,
                     connectionState = uiState.connectionState,
+                    onItemClick = { index ->
+                        systemSettingsSelectedIndex = index
+                        handleSystemSettingAccept(index)
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(bottom = 80.dp)
@@ -443,6 +596,16 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.STROKE_SPEED -> StrokeSpeedScreen(
                     selectedIndex = strokeSpeedIndex,
                     onSelectedIndexChange = { strokeSpeedIndex = it },
+                    connectionState = uiState.connectionState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(bottom = 80.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+
+                DeviceScreen.COLOR_SCHEME -> ColorSchemeScreen(
+                    selectedIndex = colorSchemeIndex,
+                    onSelectedIndexChange = { colorSchemeIndex = it },
                     connectionState = uiState.connectionState,
                     modifier = Modifier
                         .fillMaxSize()
@@ -502,7 +665,7 @@ fun ConnectedDeviceScreen(
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 4
+                                    DeviceScreen.SYSTEM_SETTINGS -> 5 // было 4, добавили цветовую схему
                                     else -> 0
                                 }
                                 when (currentScreen) {
@@ -528,7 +691,7 @@ fun ConnectedDeviceScreen(
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 4
+                                    DeviceScreen.SYSTEM_SETTINGS -> 5 // было 4, добавили цветовую схему
                                     else -> 0
                                 }
                                 when (currentScreen) {
@@ -560,76 +723,9 @@ fun ConnectedDeviceScreen(
                             withNavigationDebounce {
                                 sendNavigationCommand("ENTER")
                                 when (currentScreen) {
-                                    DeviceScreen.MAIN -> {
-                                        when (mainSelectedIndex) {
-                                            0 -> currentScreen = DeviceScreen.FUNCTIONS
-                                            1 -> currentScreen = DeviceScreen.SYSTEM_SETTINGS
-                                            2 -> {
-                                                viewModel.sendCommand("BLUETOOTH_MENU\r\n")
-                                            }
-                                            3 -> {
-                                                showPowerOffDialog = true
-                                            }
-                                        }
-                                        closeKeyboard()
-                                    }
-                                    DeviceScreen.FUNCTIONS -> {
-                                        val function = getFunctionsList().getOrNull(functionsSelectedIndex)
-                                        function?.let {
-                                            savedFunctionsIndex = functionsSelectedIndex
-                                            when (it.id) {
-                                                "direct_dosing" -> {
-                                                    currentScreen = DeviceScreen.DIRECT_DOSING
-                                                    directDosingFocus = -1 // фокус не установлен
-                                                }
-                                                "partial_dosing" -> {
-                                                    currentScreen = DeviceScreen.PARTIAL_DOSING
-                                                    partialDosingFocus = -1
-                                                }
-                                                "partial_fixed_collection" -> {
-                                                    currentScreen = DeviceScreen.PARTIAL_FIXED_COLLECTION
-                                                    partialFixedFocus = -1
-                                                }
-                                                "free_collection" -> {
-                                                    currentScreen = DeviceScreen.FREE_COLLECTION
-                                                    freeCollectionFocus = -1
-                                                }
-                                            }
-                                            closeKeyboard()
-                                        }
-                                    }
-                                    DeviceScreen.SYSTEM_SETTINGS -> {
-                                        val setting = getSystemSettingsList().getOrNull(systemSettingsSelectedIndex)
-                                        setting?.let {
-                                            when (it.id) {
-                                                "contrast_reduction" -> {
-                                                    currentScreen = DeviceScreen.CONTRAST_REDUCTION
-                                                    activeInputFieldIndex = 0
-                                                    coroutineScope.launch { delay(100); openKeyboard("contrast") }
-                                                }
-                                                "sleep_mode" -> {
-                                                    currentScreen = DeviceScreen.SLEEP_MODE
-                                                    activeInputFieldIndex = 0
-                                                    coroutineScope.launch { delay(100); openKeyboard("sleep") }
-                                                }
-                                                "stroke_speed" -> {
-                                                    currentScreen = DeviceScreen.STROKE_SPEED
-                                                    activeInputFieldIndex = 0
-                                                    closeKeyboard()
-                                                }
-                                                "max_volume" -> {
-                                                    currentScreen = DeviceScreen.MAX_VOLUME
-                                                    activeInputFieldIndex = 0
-                                                    coroutineScope.launch { delay(100); openKeyboard("max_volume") }
-                                                }
-                                                "coefficient_correction" -> {
-                                                    currentScreen = DeviceScreen.COEFFICIENT_CORRECTION
-                                                    activeInputFieldIndex = 0
-                                                    coroutineScope.launch { delay(100); openKeyboard("coefficient_0") }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    DeviceScreen.MAIN -> handleMainAccept(currentSelectedIndex)
+                                    DeviceScreen.FUNCTIONS -> handleFunctionAccept(functionsSelectedIndex)
+                                    DeviceScreen.SYSTEM_SETTINGS -> handleSystemSettingAccept(systemSettingsSelectedIndex)
                                     else -> {}
                                 }
                             }
@@ -939,6 +1035,47 @@ fun ConnectedDeviceScreen(
                     )
                 }
 
+                DeviceScreen.COLOR_SCHEME -> {
+                    ColorSchemeControlPanel(
+                        onBackClick = {
+                            withNavigationDebounce {
+                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                closeKeyboard()
+                            }
+                        },
+                        onUpClick = {
+                            withNavigationDebounce {
+                                sendNavigationCommand("UP")
+                                if (colorSchemeIndex > 0) colorSchemeIndex--
+                            }
+                        },
+                        onDownClick = {
+                            withNavigationDebounce {
+                                sendNavigationCommand("DOWN")
+                                if (colorSchemeIndex < 1) colorSchemeIndex++
+                            }
+                        },
+                        onAcceptClick = {
+                            if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                val scheme = when (colorSchemeIndex) {
+                                    0 -> "DARK"
+                                    1 -> "LIGHT"
+                                    else -> "DARK"
+                                }
+                                viewModel.sendCommand("COLOR_SCHEME:$scheme\r\n")
+                            }
+                            withNavigationDebounce {
+                                closeKeyboard()
+                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
                 DeviceScreen.COEFFICIENT_CORRECTION -> {
                     CoefficientCorrectionControlPanel(
                         onBackClick = {
@@ -1019,6 +1156,7 @@ enum class DeviceScreen {
     CONTRAST_REDUCTION,
     SLEEP_MODE,
     STROKE_SPEED,
+    COLOR_SCHEME,
     MAX_VOLUME,
     COEFFICIENT_CORRECTION
 }
@@ -1044,6 +1182,7 @@ fun MainDeviceScreen(
     deviceName: String,
     connectionState: ConnectionState,
     deviceAddress: String,
+    onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -1062,7 +1201,7 @@ fun MainDeviceScreen(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Список из четырёх элементов (НЕ КЛИКАБЕЛЬНЫ)
+        // Список из четырёх элементов (кликабельные)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1076,6 +1215,7 @@ fun MainDeviceScreen(
                 isSelected = selectedIndex == 0,
                 iconResId = R.drawable.science,
                 iconColor = Color(0xFF4CAF50),
+                onClick = { onItemClick(0) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -1086,6 +1226,7 @@ fun MainDeviceScreen(
                 isSelected = selectedIndex == 1,
                 iconResId = R.drawable.settings,
                 iconColor = Color(0xFF2196F3),
+                onClick = { onItemClick(1) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -1096,6 +1237,7 @@ fun MainDeviceScreen(
                 isSelected = selectedIndex == 2,
                 iconResId = R.drawable.outline_bluetooth_24,
                 iconColor = Color(0xFF2196F3),
+                onClick = { onItemClick(2) },
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -1106,6 +1248,7 @@ fun MainDeviceScreen(
                 isSelected = selectedIndex == 3,
                 iconResId = R.drawable.close,
                 iconColor = Color(0xFF2196F3),
+                onClick = { onItemClick(3) },
                 modifier = Modifier.fillMaxWidth()
             )
         }
@@ -1128,6 +1271,7 @@ fun MainMenuItem(
     isSelected: Boolean,
     iconResId: Int,
     iconColor: Color,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val backgroundColor = if (isSelected) {
@@ -1148,7 +1292,8 @@ fun MainMenuItem(
     )
 
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
@@ -1221,6 +1366,7 @@ fun MainMenuItem(
 fun FunctionsScreen(
     selectedIndex: Int,
     connectionState: ConnectionState,
+    onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val functions = remember { getFunctionsList() }
@@ -1246,7 +1392,7 @@ fun FunctionsScreen(
             modifier = Modifier.padding(bottom = 18.dp)
         )
 
-        // Список функций (НЕ КЛИКАБЕЛЬНЫ)
+        // Список функций (кликабельные)
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -1254,6 +1400,7 @@ fun FunctionsScreen(
                 FunctionItem(
                     function = function,
                     isSelected = index == selectedIndex,
+                    onClick = { onItemClick(index) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -1265,6 +1412,7 @@ fun FunctionsScreen(
 fun FunctionItem(
     function: DeviceFunction,
     isSelected: Boolean,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val primaryColor = Color(0xFF4CAF50)
@@ -1286,7 +1434,8 @@ fun FunctionItem(
     )
 
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .clickable { onClick() },
         shape = RoundedCornerShape(11.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
@@ -2245,6 +2394,7 @@ fun FreeCollectionScreen(
 fun SystemSettingsScreen(
     selectedIndex: Int,
     connectionState: ConnectionState,
+    onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val settings = remember { getSystemSettingsList() }
@@ -2270,7 +2420,7 @@ fun SystemSettingsScreen(
             modifier = Modifier.padding(bottom = 18.dp)
         )
 
-        // Список настроек (НЕ КЛИКАБЕЛЬНЫ)
+        // Список настроек (кликабельные)
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -2278,6 +2428,7 @@ fun SystemSettingsScreen(
                 SystemSettingItem(
                     setting = setting,
                     isSelected = index == selectedIndex,
+                    onClick = { onItemClick(index) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -2289,6 +2440,7 @@ fun SystemSettingsScreen(
 fun SystemSettingItem(
     setting: SystemSetting,
     isSelected: Boolean,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val primaryColor = Color(0xFF2196F3)
@@ -2305,7 +2457,8 @@ fun SystemSettingItem(
     }
 
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .clickable { onClick() },
         shape = RoundedCornerShape(11.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
@@ -2377,30 +2530,6 @@ fun MainControlPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Группа навигации (Вверх/Вниз)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Кнопка ВВЕРХ
-                SimpleControlButton(
-                    iconResId = R.drawable.arrow_up,
-                    label = "Вверх",
-                    onClick = onUpClick,
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    iconColor = MaterialTheme.colorScheme.primary
-                )
-
-                // Кнопка ВНИЗ
-                SimpleControlButton(
-                    iconResId = R.drawable.arrow_down,
-                    label = "Вниз",
-                    onClick = onDownClick,
-                    backgroundColor = MaterialTheme.colorScheme.surface,
-                    iconColor = MaterialTheme.colorScheme.primary
-                )
-            }
-
             // Группа действий (Назад/Принять)
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -2413,15 +2542,6 @@ fun MainControlPanel(
                     onClick = onBackClick,
                     backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
                     iconColor = MaterialTheme.colorScheme.error
-                )
-
-                // Кнопка ПРИНЯТЬ
-                SimpleControlButton(
-                    iconResId = R.drawable.check_circle,
-                    label = "Ввод",
-                    onClick = onAcceptClick,
-                    backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                    iconColor = Color(0xFF4CAF50)
                 )
             }
         }
@@ -2630,6 +2750,57 @@ fun FreeCollectionControlPanel(
 
 @Composable
 fun StrokeSpeedControlPanelWithArrows(
+    onBackClick: () -> Unit,
+    onUpClick: () -> Unit,
+    onDownClick: () -> Unit,
+    onAcceptClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Кнопка ВВЕРХ
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_up,
+                label = "Вверх",
+                onClick = onUpClick,
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                iconColor = MaterialTheme.colorScheme.primary
+            )
+
+            // Кнопка ВНИЗ
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_down,
+                label = "Вниз",
+                onClick = onDownClick,
+                backgroundColor = MaterialTheme.colorScheme.surface,
+                iconColor = MaterialTheme.colorScheme.primary
+            )
+
+            // Кнопка ПРИНЯТЬ
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = "Ввод",
+                onClick = onAcceptClick,
+                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
+                iconColor = Color(0xFF4CAF50)
+            )
+        }
+    }
+}
+
+@Composable
+fun ColorSchemeControlPanel(
     onBackClick: () -> Unit,
     onUpClick: () -> Unit,
     onDownClick: () -> Unit,
@@ -3144,6 +3315,63 @@ fun StrokeSpeedScreen(
 }
 
 @Composable
+fun ColorSchemeScreen(
+    selectedIndex: Int,
+    onSelectedIndexChange: (Int) -> Unit,
+    connectionState: ConnectionState,
+    modifier: Modifier = Modifier
+) {
+    val schemeOptions = remember {
+        listOf(
+            "Темная",
+            "Светлая"
+        )
+    }
+
+    Column(
+        modifier = modifier
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Заголовок
+        Text(
+            text = "Цветовая схема",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 20.sp,
+            modifier = Modifier.padding(bottom = 32.dp)
+        )
+
+        // Список опций
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            schemeOptions.forEachIndexed { index, option ->
+                StrokeSpeedOption(
+                    text = option,
+                    isSelected = index == selectedIndex,
+                    onClick = { onSelectedIndexChange(index) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        // Подсказка
+        if (connectionState != ConnectionState.CONNECTED) {
+            ConnectionRequiredWarning(
+                message = "Для изменения настроек требуется подключение к устройству",
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+@Composable
 fun StrokeSpeedOption(
     text: String,
     isSelected: Boolean,
@@ -3164,7 +3392,8 @@ fun StrokeSpeedOption(
     }
 
     Card(
-        modifier = modifier,
+        modifier = modifier
+            .clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
@@ -3799,6 +4028,11 @@ private fun getSystemSettingsList(): List<SystemSetting> {
             id = "coefficient_correction",
             name = "Коррекция коэффициентов",
             iconResId = R.drawable.calculate
+        ),
+        SystemSetting(
+            id = "color_scheme",
+            name = "Цветовая схема",
+            iconResId = R.drawable.clear
         )
     )
 }
