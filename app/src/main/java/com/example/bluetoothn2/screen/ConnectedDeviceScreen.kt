@@ -88,6 +88,8 @@ fun ConnectedDeviceScreen(
     var prevMainIndex  by remember { mutableStateOf(0) }
     var prevFunctionsIndex by remember { mutableStateOf(0) }
     var prevSettingsIndex by remember { mutableStateOf(0) }
+    var strokeSpeedSelectionActive by remember { mutableStateOf(false) }
+    var colorSchemeSelectionActive by remember { mutableStateOf(false) }
 
     // Индекс активного поля для экранов ввода
     var activeInputFieldIndex by remember { mutableStateOf(0) }
@@ -629,13 +631,9 @@ fun ConnectedDeviceScreen(
                 )
 
                 DeviceScreen.COEFFICIENT_CORRECTION -> CoefficientCorrectionScreen(
-                    d6Value1 = coefficientD6Value1,
-                    d6Value2 = coefficientD6Value2,
                     realValue1 = coefficientRealValue1,
                     realValue2 = coefficientRealValue2,
                     activeFieldIndex = activeInputFieldIndex,
-                    onD6Value1Change = { coefficientD6Value1 = it },
-                    onD6Value2Change = { coefficientD6Value2 = it },
                     onRealValue1Change = { coefficientRealValue1 = it },
                     onRealValue2Change = { coefficientRealValue2 = it },
                     connectionState = uiState.connectionState,
@@ -994,38 +992,46 @@ fun ConnectedDeviceScreen(
                 }
 
                 DeviceScreen.STROKE_SPEED -> {
-                    StrokeSpeedControlPanelWithArrows(
+                    StrokeSpeedControlPanel(
+                        isSelectionActive = strokeSpeedSelectionActive,
                         onBackClick = {
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
-                                closeKeyboard()
-                            }
-                        },
-                        onUpClick = {
-                            withNavigationDebounce {
-                                sendNavigationCommand("UP")
-                                if (strokeSpeedIndex > 0) strokeSpeedIndex--
-                            }
-                        },
-                        onDownClick = {
-                            withNavigationDebounce {
-                                sendNavigationCommand("DOWN")
-                                if (strokeSpeedIndex < 2) strokeSpeedIndex++
-                            }
-                        },
-                        onAcceptClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val speed = when (strokeSpeedIndex) {
-                                    0 -> "HIGH"
-                                    1 -> "MEDIUM"
-                                    2 -> "LOW"
-                                    else -> "MEDIUM"
+                            if (strokeSpeedSelectionActive) {
+                                // Деактивируем режим выбора, не выходим
+                                strokeSpeedSelectionActive = false
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    viewModel.sendCommand("BACK:\r\n")
                                 }
-                                viewModel.sendCommand("STROKE_SPEED:$speed\r\n")
+                            } else {
+                                // Выходим с отправкой BACK
+                                withNavigationDebounce {
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:\r\n")
+                                    }
+                                    currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                    closeKeyboard()
+                                }
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                        },
+                        onEnterClick = {
+                            if (!strokeSpeedSelectionActive) {
+                                // Первое нажатие: активируем режим выбора
+                                strokeSpeedSelectionActive = true
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    viewModel.sendCommand("ENTER:\r\n")
+                                }
+                            } else {
+                                // Переключаем параметр
+                                val newIndex = (strokeSpeedIndex + 1) % 3
+                                strokeSpeedIndex = newIndex
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    val speed = when (newIndex) {
+                                        0 -> "HIGH"
+                                        1 -> "MEDIUM"
+                                        2 -> "LOW"
+                                        else -> "MEDIUM"
+                                    }
+                                    viewModel.sendCommand("ENTER:\r\n")
+                                }
                             }
                         },
                         modifier = Modifier
@@ -1035,38 +1041,44 @@ fun ConnectedDeviceScreen(
                     )
                 }
 
+
                 DeviceScreen.COLOR_SCHEME -> {
                     ColorSchemeControlPanel(
+                        isSelectionActive = colorSchemeSelectionActive,
                         onBackClick = {
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
-                                closeKeyboard()
-                            }
-                        },
-                        onUpClick = {
-                            withNavigationDebounce {
-                                sendNavigationCommand("UP")
-                                if (colorSchemeIndex > 0) colorSchemeIndex--
-                            }
-                        },
-                        onDownClick = {
-                            withNavigationDebounce {
-                                sendNavigationCommand("DOWN")
-                                if (colorSchemeIndex < 1) colorSchemeIndex++
-                            }
-                        },
-                        onAcceptClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val scheme = when (colorSchemeIndex) {
-                                    0 -> "DARK"
-                                    1 -> "LIGHT"
-                                    else -> "DARK"
+                            if (colorSchemeSelectionActive) {
+                                // Деактивируем режим выбора
+                                colorSchemeSelectionActive = false
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    viewModel.sendCommand("BACK:\r\n")
                                 }
-                                viewModel.sendCommand("COLOR_SCHEME:$scheme\r\n")
+                            } else {
+                                withNavigationDebounce {
+                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                        viewModel.sendCommand("BACK:\r\n")
+                                    }
+                                    currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                    closeKeyboard()
+                                }
                             }
-                            withNavigationDebounce {
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                        },
+                        onEnterClick = {
+                            if (!colorSchemeSelectionActive) {
+                                colorSchemeSelectionActive = true
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    viewModel.sendCommand("ENTER:\r\n")
+                                }
+                            } else {
+                                val newIndex = (colorSchemeIndex + 1) % 2
+                                colorSchemeIndex = newIndex
+                                if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    val scheme = when (newIndex) {
+                                        0 -> "DARK"
+                                        1 -> "LIGHT"
+                                        else -> "DARK"
+                                    }
+                                    viewModel.sendCommand("ENTER:\r\n")
+                                }
                             }
                         },
                         modifier = Modifier
@@ -2749,11 +2761,10 @@ fun FreeCollectionControlPanel(
 }
 
 @Composable
-fun StrokeSpeedControlPanelWithArrows(
+fun StrokeSpeedControlPanel(
+    isSelectionActive: Boolean,
     onBackClick: () -> Unit,
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
-    onAcceptClick: () -> Unit,
+    onEnterClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -2769,31 +2780,20 @@ fun StrokeSpeedControlPanelWithArrows(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Кнопка ВВЕРХ
             SimpleControlButton(
-                iconResId = R.drawable.arrow_up,
-                label = "Вверх",
-                onClick = onUpClick,
-                backgroundColor = MaterialTheme.colorScheme.surface,
-                iconColor = MaterialTheme.colorScheme.primary
+                iconResId = R.drawable.arrow_back,
+                label = if (isSelectionActive) "Снять" else "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
             )
 
-            // Кнопка ВНИЗ
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
-                label = "Вниз",
-                onClick = onDownClick,
-                backgroundColor = MaterialTheme.colorScheme.surface,
-                iconColor = MaterialTheme.colorScheme.primary
-            )
-
-            // Кнопка ПРИНЯТЬ
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
-                label = "Ввод",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
+                label = if (isSelectionActive) "Выбрать" else "Ввод",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
             )
         }
     }
@@ -2801,10 +2801,9 @@ fun StrokeSpeedControlPanelWithArrows(
 
 @Composable
 fun ColorSchemeControlPanel(
+    isSelectionActive: Boolean,
     onBackClick: () -> Unit,
-    onUpClick: () -> Unit,
-    onDownClick: () -> Unit,
-    onAcceptClick: () -> Unit,
+    onEnterClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -2820,31 +2819,20 @@ fun ColorSchemeControlPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Кнопка ВВЕРХ
             SimpleControlButton(
-                iconResId = R.drawable.arrow_up,
-                label = "Вверх",
-                onClick = onUpClick,
-                backgroundColor = MaterialTheme.colorScheme.surface,
-                iconColor = MaterialTheme.colorScheme.primary
+                iconResId = R.drawable.arrow_back,
+                label = if (isSelectionActive) "Снять" else "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
             )
 
-            // Кнопка ВНИЗ
-            SimpleControlButton(
-                iconResId = R.drawable.arrow_down,
-                label = "Вниз",
-                onClick = onDownClick,
-                backgroundColor = MaterialTheme.colorScheme.surface,
-                iconColor = MaterialTheme.colorScheme.primary
-            )
-
-            // Кнопка ПРИНЯТЬ
             SimpleControlButton(
                 iconResId = R.drawable.check_circle,
-                label = "Ввод",
-                onClick = onAcceptClick,
-                backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                iconColor = Color(0xFF4CAF50)
+                label = if (isSelectionActive) "Выбрать" else "Ввод",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
             )
         }
     }
@@ -3443,13 +3431,9 @@ fun StrokeSpeedOption(
 
 @Composable
 fun CoefficientCorrectionScreen(
-    d6Value1: String,
-    d6Value2: String,
     realValue1: String,
     realValue2: String,
     activeFieldIndex: Int,
-    onD6Value1Change: (String) -> Unit,
-    onD6Value2Change: (String) -> Unit,
     onRealValue1Change: (String) -> Unit,
     onRealValue2Change: (String) -> Unit,
     connectionState: ConnectionState,
@@ -3457,12 +3441,12 @@ fun CoefficientCorrectionScreen(
     onFocusChange: (Int, Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val focusRequesters = remember { List(4) { FocusRequester() } }
+    val focusRequesters = remember { List(2) { FocusRequester() } }
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // Управляем фокусом в зависимости от активного поля
     LaunchedEffect(activeFieldIndex) {
-        if (activeFieldIndex in 0..3) {
+        if (activeFieldIndex in 0..1) {
             focusRequesters[activeFieldIndex].requestFocus()
             keyboardController?.show()
         }
@@ -3502,47 +3486,37 @@ fun CoefficientCorrectionScreen(
                 .padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Столбик D6
+            // Столбик "Должно быть" (фиксированные значения)
             Column(
                 modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                    text = "Д6",
+                    text = "Должно быть",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 18.sp,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Первое поле D6
-                CoefficientField(
-                    value = d6Value1,
-                    onValueChange = onD6Value1Change,
-                    isFocused = isFieldFocused(0),
-                    onFocusChange = { onFocusChange(0, it) },
-                    focusRequester = focusRequesters[0],
-                    label = "Значение 1",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp)
+                // Фиксированное значение 1
+                FixedValueField(
+                    value = "30",
+                    label = "Значение 1"
                 )
 
-                // Второе поле D6
-                CoefficientField(
-                    value = d6Value2,
-                    onValueChange = onD6Value2Change,
-                    isFocused = isFieldFocused(1),
-                    onFocusChange = { onFocusChange(1, it) },
-                    focusRequester = focusRequesters[1],
-                    label = "Значение 2",
-                    modifier = Modifier.fillMaxWidth()
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Фиксированное значение 2
+                FixedValueField(
+                    value = "300",
+                    label = "Значение 2"
                 )
             }
 
             Spacer(modifier = Modifier.width(24.dp))
 
-            // Столбик Реал
+            // Столбик "Реал" (редактируемые поля)
             Column(
                 modifier = Modifier.weight(1f),
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -3559,9 +3533,9 @@ fun CoefficientCorrectionScreen(
                 CoefficientField(
                     value = realValue1,
                     onValueChange = onRealValue1Change,
-                    isFocused = isFieldFocused(2),
-                    onFocusChange = { onFocusChange(2, it) },
-                    focusRequester = focusRequesters[2],
+                    isFocused = isFieldFocused(0),
+                    onFocusChange = { onFocusChange(0, it) },
+                    focusRequester = focusRequesters[0],
                     label = "Значение 1",
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3572,9 +3546,9 @@ fun CoefficientCorrectionScreen(
                 CoefficientField(
                     value = realValue2,
                     onValueChange = onRealValue2Change,
-                    isFocused = isFieldFocused(3),
-                    onFocusChange = { onFocusChange(3, it) },
-                    focusRequester = focusRequesters[3],
+                    isFocused = isFieldFocused(1),
+                    onFocusChange = { onFocusChange(1, it) },
+                    focusRequester = focusRequesters[1],
                     label = "Значение 2",
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -3591,12 +3565,62 @@ fun CoefficientCorrectionScreen(
             )
         } else {
             Text(
-                text = "Активное поле: ${activeFieldIndex + 1}/4",
+                text = "Активное поле: ${activeFieldIndex + 1}/2",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(top = 8.dp)
             )
+        }
+    }
+}
+
+@Composable
+fun FixedValueField(
+    value: String,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ),
+            border = CardDefaults.outlinedCardBorder().copy(
+                width = 1.dp
+            )
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart
+            ) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 18.sp
+                    )
+                )
+            }
         }
     }
 }
