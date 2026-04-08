@@ -13,6 +13,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -81,15 +82,11 @@ fun ConnectedDeviceScreen(
     var strokeSpeedIndex by remember { mutableStateOf(1) } // 0: высокая, 1: средняя, 2: низкая
     var colorSchemeIndex by remember { mutableStateOf(0) } // 0: темная, 1: светлая
     var maxVolumeValue by remember { mutableStateOf("0") }
-    var coefficientD6Value1 by remember { mutableStateOf("0") }
-    var coefficientD6Value2 by remember { mutableStateOf("0") }
     var coefficientRealValue1 by remember { mutableStateOf("0") }
     var coefficientRealValue2 by remember { mutableStateOf("0") }
     var prevMainIndex  by remember { mutableStateOf(0) }
     var prevFunctionsIndex by remember { mutableStateOf(0) }
     var prevSettingsIndex by remember { mutableStateOf(0) }
-    var strokeSpeedSelectionActive by remember { mutableStateOf(false) }
-    var colorSchemeSelectionActive by remember { mutableStateOf(false) }
 
     // Индекс активного поля для экранов ввода
     var activeInputFieldIndex by remember { mutableStateOf(0) }
@@ -121,6 +118,12 @@ fun ConnectedDeviceScreen(
     var notEmpty by remember { mutableStateOf(false) }
     var showPowerOffDialog by remember { mutableStateOf(false) }
 
+    // Состояния для экранов выбора с режимом активации
+    var strokeSpeedSelectionActive by remember { mutableStateOf(false) }
+    var colorSchemeSelectionActive by remember { mutableStateOf(false) }
+    var coefficientSelectionActive by remember { mutableStateOf(false) }
+    var coefficientActiveFieldIndex by remember { mutableStateOf(-1) } // -1 = нет фокуса
+
     // Получаем текущий выбранный индекс в зависимости от экрана
     val currentSelectedIndex = when (currentScreen) {
         DeviceScreen.MAIN -> mainSelectedIndex
@@ -133,7 +136,7 @@ fun ConnectedDeviceScreen(
     fun withNavigationDebounce(action: () -> Unit) {
         navigationDebounceJob?.cancel()
         navigationDebounceJob = coroutineScope.launch {
-            delay(350)
+            delay(650)
             action()
         }
     }
@@ -238,7 +241,7 @@ fun ConnectedDeviceScreen(
     }
 
     fun handleSystemSettingAccept(index: Int) {
-        val del: Long = 400
+        val del: Long = 450
         if(prevSettingsIndex == systemSettingsSelectedIndex){
             sendNavigationCommand("ENTER")
         } else{
@@ -272,18 +275,18 @@ fun ConnectedDeviceScreen(
                 }
                 "stroke_speed" -> {
                     currentScreen = DeviceScreen.STROKE_SPEED
-                    activeInputFieldIndex = 0
+                    strokeSpeedSelectionActive = false
                     closeKeyboard()
                 }
                 "color_scheme" -> {
                     currentScreen = DeviceScreen.COLOR_SCHEME
-                    activeInputFieldIndex = 0
+                    colorSchemeSelectionActive = false
                     closeKeyboard()
                 }
                 "max_volume" -> {
                     currentScreen = DeviceScreen.MAX_VOLUME
                     activeInputFieldIndex = 0
-                    coroutineScope.launch { delay(100)}
+                    coroutineScope.launch { delay(100);}
                 }
                 "coefficient_correction" -> {
                     currentScreen = DeviceScreen.COEFFICIENT_CORRECTION
@@ -597,6 +600,7 @@ fun ConnectedDeviceScreen(
 
                 DeviceScreen.STROKE_SPEED -> StrokeSpeedScreen(
                     selectedIndex = strokeSpeedIndex,
+                    isSelectionActive = strokeSpeedSelectionActive,
                     onSelectedIndexChange = { strokeSpeedIndex = it },
                     connectionState = uiState.connectionState,
                     modifier = Modifier
@@ -607,6 +611,7 @@ fun ConnectedDeviceScreen(
 
                 DeviceScreen.COLOR_SCHEME -> ColorSchemeScreen(
                     selectedIndex = colorSchemeIndex,
+                    isSelectionActive = colorSchemeSelectionActive,
                     onSelectedIndexChange = { colorSchemeIndex = it },
                     connectionState = uiState.connectionState,
                     modifier = Modifier
@@ -633,17 +638,15 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.COEFFICIENT_CORRECTION -> CoefficientCorrectionScreen(
                     realValue1 = coefficientRealValue1,
                     realValue2 = coefficientRealValue2,
-                    activeFieldIndex = activeInputFieldIndex,
+                    isSelectionActive = coefficientSelectionActive,
+                    activeFieldIndex = coefficientActiveFieldIndex,
                     onRealValue1Change = { coefficientRealValue1 = it },
                     onRealValue2Change = { coefficientRealValue2 = it },
+                    onFocusRequest = { index ->
+                        // Запрашиваем фокус для поля с указанным индексом
+                        coefficientActiveFieldIndex = index
+                    },
                     connectionState = uiState.connectionState,
-                    isFieldFocused = { index ->
-                        hasTextFieldFocus && currentFocusFieldId == "coefficient_$index"
-                    },
-                    onFocusChange = { index, focused ->
-                        hasTextFieldFocus = focused
-                        currentFocusFieldId = if (focused) "coefficient_$index" else null
-                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(bottom = 80.dp)
@@ -663,7 +666,7 @@ fun ConnectedDeviceScreen(
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 5 // было 4, добавили цветовую схему
+                                    DeviceScreen.SYSTEM_SETTINGS -> 5
                                     else -> 0
                                 }
                                 when (currentScreen) {
@@ -689,7 +692,7 @@ fun ConnectedDeviceScreen(
                                 val maxIndex = when (currentScreen) {
                                     DeviceScreen.MAIN -> 3
                                     DeviceScreen.FUNCTIONS -> 3
-                                    DeviceScreen.SYSTEM_SETTINGS -> 5 // было 4, добавили цветовую схему
+                                    DeviceScreen.SYSTEM_SETTINGS -> 5
                                     else -> 0
                                 }
                                 when (currentScreen) {
@@ -953,31 +956,24 @@ fun ConnectedDeviceScreen(
                 DeviceScreen.CONTRAST_REDUCTION,
                 DeviceScreen.SLEEP_MODE,
                 DeviceScreen.MAX_VOLUME -> {
-                    SystemSettingControlPanel(
+                    // Новая панель только с кнопкой Назад, отправляющей BACK:значение
+                    BackOnlyControlPanel(
                         onBackClick = {
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
-                                closeKeyboard()
-                            }
-                        },
-                        onAcceptClick = {
-                            if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                val command = when (currentScreen) {
-                                    DeviceScreen.CONTRAST_REDUCTION -> {
-                                        val value = contrastReductionValue.toIntOrNull() ?: 0
-                                        "CONTRAST:$value\r\n"
-                                    }
-                                    DeviceScreen.SLEEP_MODE -> {
-                                        val value = sleepModeValue.toIntOrNull() ?: 0
-                                        "SLEEP:$value\r\n"
-                                    }
-                                    DeviceScreen.MAX_VOLUME -> {
-                                        val value = maxVolumeValue.toIntOrNull() ?: 0
-                                        "MAX_VOLUME:$value\r\n"
-                                    }
-                                    else -> ""
+                            // Отправляем команду BACK с текущим значением
+                            when (currentScreen) {
+                                DeviceScreen.CONTRAST_REDUCTION -> {
+                                    val value = contrastReductionValue.toIntOrNull() ?: 0
+                                    viewModel.sendCommand("BACK:$value\r\n")
                                 }
-                                if (command.isNotEmpty()) viewModel.sendCommand(command)
+                                DeviceScreen.SLEEP_MODE -> {
+                                    val value = sleepModeValue.toIntOrNull() ?: 0
+                                    viewModel.sendCommand("BACK:$value\r\n")
+                                }
+                                DeviceScreen.MAX_VOLUME -> {
+                                    val value = maxVolumeValue.toIntOrNull() ?: 0
+                                    viewModel.sendCommand("BACK:$value\r\n")
+                                }
+                                else -> {}
                             }
                             withNavigationDebounce {
                                 closeKeyboard()
@@ -996,17 +992,13 @@ fun ConnectedDeviceScreen(
                         isSelectionActive = strokeSpeedSelectionActive,
                         onBackClick = {
                             if (strokeSpeedSelectionActive) {
-                                // Деактивируем режим выбора, не выходим
                                 strokeSpeedSelectionActive = false
+                                viewModel.sendCommand("BACK:\r\n")
+                            } else {
                                 if (uiState.connectionState == ConnectionState.CONNECTED) {
                                     viewModel.sendCommand("BACK:\r\n")
                                 }
-                            } else {
-                                // Выходим с отправкой BACK
                                 withNavigationDebounce {
-                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        viewModel.sendCommand("BACK:\r\n")
-                                    }
                                     currentScreen = DeviceScreen.SYSTEM_SETTINGS
                                     closeKeyboard()
                                 }
@@ -1014,16 +1006,12 @@ fun ConnectedDeviceScreen(
                         },
                         onEnterClick = {
                             if (!strokeSpeedSelectionActive) {
-                                // Первое нажатие: активируем режим выбора
                                 strokeSpeedSelectionActive = true
-                                if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    viewModel.sendCommand("ENTER:\r\n")
-                                }
+                                viewModel.sendCommand("ENTER:\r\n")
                             } else {
-                                // Переключаем параметр
-                                val newIndex = (strokeSpeedIndex + 1) % 3
-                                strokeSpeedIndex = newIndex
                                 if (uiState.connectionState == ConnectionState.CONNECTED) {
+                                    val newIndex = (strokeSpeedIndex + 1) % 3
+                                    strokeSpeedIndex = newIndex
                                     val speed = when (newIndex) {
                                         0 -> "HIGH"
                                         1 -> "MEDIUM"
@@ -1041,22 +1029,17 @@ fun ConnectedDeviceScreen(
                     )
                 }
 
-
                 DeviceScreen.COLOR_SCHEME -> {
                     ColorSchemeControlPanel(
                         isSelectionActive = colorSchemeSelectionActive,
                         onBackClick = {
                             if (colorSchemeSelectionActive) {
-                                // Деактивируем режим выбора
                                 colorSchemeSelectionActive = false
-                                if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    viewModel.sendCommand("BACK:\r\n")
-                                }
+                                viewModel.sendCommand("BACK:\r\n")
                             } else {
+                                if (uiState.connectionState == ConnectionState.CONNECTED)
+                                    viewModel.sendCommand("BACK:\r\n")
                                 withNavigationDebounce {
-                                    if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                        viewModel.sendCommand("BACK:\r\n")
-                                    }
                                     currentScreen = DeviceScreen.SYSTEM_SETTINGS
                                     closeKeyboard()
                                 }
@@ -1065,9 +1048,7 @@ fun ConnectedDeviceScreen(
                         onEnterClick = {
                             if (!colorSchemeSelectionActive) {
                                 colorSchemeSelectionActive = true
-                                if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    viewModel.sendCommand("ENTER:\r\n")
-                                }
+                                viewModel.sendCommand("ENTER:\r\n")
                             } else {
                                 val newIndex = (colorSchemeIndex + 1) % 2
                                 colorSchemeIndex = newIndex
@@ -1089,25 +1070,39 @@ fun ConnectedDeviceScreen(
                 }
 
                 DeviceScreen.COEFFICIENT_CORRECTION -> {
-                    CoefficientCorrectionControlPanel(
+                    CoefficientControlPanel(
+                        isSelectionActive = coefficientSelectionActive,
                         onBackClick = {
-                            withNavigationDebounce {
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                            if (coefficientSelectionActive) {
+                                // Деактивируем режим выбора
+                                coefficientSelectionActive = false
+                                coefficientActiveFieldIndex = -1
                                 closeKeyboard()
-                            }
-                        },
-                        onAcceptClick = {
-                            withNavigationDebounce {
+                            } else {
+                                // Отправляем BACK с фиксированными значениями 30 и 300
                                 if (uiState.connectionState == ConnectionState.CONNECTED) {
-                                    val command = "COEFFICIENT:$coefficientD6Value1:$coefficientD6Value2:$coefficientRealValue1:$coefficientRealValue2\r\n"
+                                    val command = "BACK:$coefficientRealValue1:$coefficientRealValue2\r\n"
                                     viewModel.sendCommand(command)
                                 }
-                                closeKeyboard()
-                                currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                withNavigationDebounce {
+                                    closeKeyboard()
+                                    currentScreen = DeviceScreen.SYSTEM_SETTINGS
+                                }
                             }
                         },
-                        activeFieldIndex = activeInputFieldIndex,
-                        totalFields = 4,
+                        onEnterClick = {
+                            if (!coefficientSelectionActive) {
+                                // Активируем режим выбора и устанавливаем фокус на первое поле
+                                coefficientSelectionActive = true
+                                coefficientActiveFieldIndex = 0
+                                coroutineScope.launch { delay(100); openKeyboard("coefficient_0") }
+                            } else {
+                                // Переключаем фокус на следующее поле (по кругу)
+                                val newIndex = (coefficientActiveFieldIndex + 1) % 2
+                                coefficientActiveFieldIndex = newIndex
+                                coroutineScope.launch { delay(100); openKeyboard("coefficient_$newIndex") }
+                            }
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
@@ -2761,6 +2756,164 @@ fun FreeCollectionControlPanel(
 }
 
 @Composable
+fun CoefficientCorrectionScreen(
+    realValue1: String,
+    realValue2: String,
+    isSelectionActive: Boolean,
+    activeFieldIndex: Int,
+    onRealValue1Change: (String) -> Unit,
+    onRealValue2Change: (String) -> Unit,
+    onFocusRequest: (Int) -> Unit,
+    connectionState: ConnectionState,
+    modifier: Modifier = Modifier
+) {
+    val focusRequesters = remember { List(2) { FocusRequester() } }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+
+    LaunchedEffect(activeFieldIndex, isSelectionActive) {
+        if (isSelectionActive && activeFieldIndex in 0..1) {
+            focusRequesters[activeFieldIndex].requestFocus()
+            delay(100)
+            keyboardController?.show()
+        } else if (!isSelectionActive) {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = "Коррекция коэффициентов",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 20.sp,
+            modifier = Modifier.padding(bottom = 24.dp)
+        )
+
+        Text(
+            text = "Вычисление поправочного коэффициента",
+            style = MaterialTheme.typography.bodyMedium,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Должно быть",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                FixedValueField(
+                    value = "30",
+                    label = "Значение 1"
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                FixedValueField(
+                    value = "300",
+                    label = "Значение 2"
+                )
+            }
+
+            Spacer(modifier = Modifier.width(24.dp))
+
+            Column(
+                modifier = Modifier.weight(1f),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Реал",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                CoefficientField(
+                    value = realValue1,
+                    onValueChange = onRealValue1Change,
+                    isFocused = isSelectionActive && activeFieldIndex == 0,
+                    onFocusChange = { focused ->
+                        if (focused && isSelectionActive) {
+                            onFocusRequest(0)
+                        }
+                    },
+                    focusRequester = focusRequesters[0],
+                    label = "Значение 1",
+                    readOnly = !isSelectionActive,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 12.dp)
+                )
+
+                CoefficientField(
+                    value = realValue2,
+                    onValueChange = onRealValue2Change,
+                    isFocused = isSelectionActive && activeFieldIndex == 1,
+                    onFocusChange = { focused ->
+                        if (focused && isSelectionActive) {
+                            onFocusRequest(1)
+                        }
+                    },
+                    focusRequester = focusRequesters[1],
+                    label = "Значение 2",
+                    readOnly = !isSelectionActive,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+
+        if (connectionState != ConnectionState.CONNECTED) {
+            ConnectionRequiredWarning(
+                message = "Для изменения настроек требуется подключение к устройству",
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else if (isSelectionActive) {
+            Text(
+                text = "Активное поле: ${activeFieldIndex + 1}/2",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        } else {
+            Text(
+                text = "Нажмите «Ввод» для активации редактирования",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
+    }
+}
+
+@Composable
 fun StrokeSpeedControlPanel(
     isSelectionActive: Boolean,
     onBackClick: () -> Unit,
@@ -2839,6 +2992,74 @@ fun ColorSchemeControlPanel(
 }
 
 @Composable
+fun CoefficientControlPanel(
+    isSelectionActive: Boolean,
+    onBackClick: () -> Unit,
+    onEnterClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = if (isSelectionActive) "Снять" else "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+
+            SimpleControlButton(
+                iconResId = R.drawable.check_circle,
+                label = if (isSelectionActive) "Выбрать" else "Ввод",
+                onClick = onEnterClick,
+                backgroundColor = Color(0xFF2196F3).copy(alpha = 0.1f),
+                iconColor = Color(0xFF2196F3)
+            )
+        }
+    }
+}
+
+@Composable
+fun BackOnlyControlPanel(
+    onBackClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp, horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Absolute.Left,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SimpleControlButton(
+                iconResId = R.drawable.arrow_back,
+                label = "Назад",
+                onClick = onBackClick,
+                backgroundColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f),
+                iconColor = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@Composable
 fun SimpleControlButton(
     iconResId: Int,
     label: String,
@@ -2909,53 +3130,6 @@ fun ConnectionStatusIndicator(
                     else -> MaterialTheme.colorScheme.error
                 }
             )
-        }
-    }
-}
-
-@Composable
-fun CoefficientCorrectionControlPanel(
-    onBackClick: () -> Unit,
-    onAcceptClick: () -> Unit,
-    activeFieldIndex: Int,
-    totalFields: Int,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        tonalElevation = 2.dp
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp, horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Индикатор поля
-            Text(
-                text = "Поле ${activeFieldIndex + 1}/$totalFields",
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Кнопка ВЫПОЛНИТЬ
-                SimpleControlButton(
-                    iconResId = R.drawable.check_circle,
-                    label = "Ввод",
-                    onClick = onAcceptClick,
-                    backgroundColor = Color(0xFF4CAF50).copy(alpha = 0.1f),
-                    iconColor = Color(0xFF4CAF50)
-                )
-            }
         }
     }
 }
@@ -3247,6 +3421,7 @@ fun SleepModeScreen(
 @Composable
 fun StrokeSpeedScreen(
     selectedIndex: Int,
+    isSelectionActive: Boolean,
     onSelectedIndexChange: (Int) -> Unit,
     connectionState: ConnectionState,
     modifier: Modifier = Modifier
@@ -3284,7 +3459,8 @@ fun StrokeSpeedScreen(
                 StrokeSpeedOption(
                     text = option,
                     isSelected = index == selectedIndex,
-                    onClick = { onSelectedIndexChange(index) },
+                    isSelectionActive = isSelectionActive,
+                    onClick = { if (isSelectionActive) onSelectedIndexChange(index) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -3305,6 +3481,7 @@ fun StrokeSpeedScreen(
 @Composable
 fun ColorSchemeScreen(
     selectedIndex: Int,
+    isSelectionActive: Boolean,
     onSelectedIndexChange: (Int) -> Unit,
     connectionState: ConnectionState,
     modifier: Modifier = Modifier
@@ -3341,7 +3518,8 @@ fun ColorSchemeScreen(
                 StrokeSpeedOption(
                     text = option,
                     isSelected = index == selectedIndex,
-                    onClick = { onSelectedIndexChange(index) },
+                    isSelectionActive = isSelectionActive,
+                    onClick = { if (isSelectionActive) onSelectedIndexChange(index) },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
@@ -3363,35 +3541,40 @@ fun ColorSchemeScreen(
 fun StrokeSpeedOption(
     text: String,
     isSelected: Boolean,
+    isSelectionActive: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val primaryColor = Color(0xFF2196F3)
-    val backgroundColor = if (isSelected) {
+    val backgroundColor = if (isSelected && isSelectionActive) {
+        primaryColor.copy(alpha = 0.15f)
+    } else if (isSelected) {
         primaryColor.copy(alpha = 0.08f)
     } else {
         MaterialTheme.colorScheme.surface
     }
 
-    val borderColor = if (isSelected) {
+    val borderColor = if (isSelected && isSelectionActive) {
         primaryColor
+    } else if (isSelected) {
+        primaryColor.copy(alpha = 0.5f)
     } else {
         MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
     }
 
     Card(
         modifier = modifier
-            .clickable { onClick() },
+            .clickable(enabled = isSelectionActive) { onClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = backgroundColor,
             contentColor = MaterialTheme.colorScheme.onSurface
         ),
         border = CardDefaults.outlinedCardBorder().copy(
-            width = if (isSelected) 1.5.dp else 0.5.dp
+            width = if (isSelected && isSelectionActive) 2.dp else if (isSelected) 1.5.dp else 0.5.dp
         ),
         elevation = CardDefaults.cardElevation(
-            defaultElevation = if (isSelected) 2.dp else 0.dp
+            defaultElevation = if (isSelected && isSelectionActive) 3.dp else if (isSelected) 2.dp else 0.dp
         )
     ) {
         Row(
@@ -3410,7 +3593,7 @@ fun StrokeSpeedOption(
             )
 
             // Индикатор выбора
-            if (isSelected) {
+            if (isSelected && isSelectionActive) {
                 Box(
                     modifier = Modifier
                         .size(24.dp)
@@ -3424,153 +3607,21 @@ fun StrokeSpeedOption(
                         fontSize = 18.sp
                     )
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun CoefficientCorrectionScreen(
-    realValue1: String,
-    realValue2: String,
-    activeFieldIndex: Int,
-    onRealValue1Change: (String) -> Unit,
-    onRealValue2Change: (String) -> Unit,
-    connectionState: ConnectionState,
-    isFieldFocused: (Int) -> Boolean,
-    onFocusChange: (Int, Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val focusRequesters = remember { List(2) { FocusRequester() } }
-    val keyboardController = LocalSoftwareKeyboardController.current
-
-    // Управляем фокусом в зависимости от активного поля
-    LaunchedEffect(activeFieldIndex) {
-        if (activeFieldIndex in 0..1) {
-            focusRequesters[activeFieldIndex].requestFocus()
-            keyboardController?.show()
-        }
-    }
-
-    Column(
-        modifier = modifier
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Заголовок
-        Text(
-            text = "Коррекция коэффициентов",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 20.sp,
-            modifier = Modifier.padding(bottom = 24.dp)
-        )
-
-        // Описание
-        Text(
-            text = "Вычисление поправочного коэффициента",
-            style = MaterialTheme.typography.bodyMedium,
-            fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Два столбика
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Столбик "Должно быть" (фиксированные значения)
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Должно быть",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                // Фиксированное значение 1
-                FixedValueField(
-                    value = "30",
-                    label = "Значение 1"
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Фиксированное значение 2
-                FixedValueField(
-                    value = "300",
-                    label = "Значение 2"
-                )
-            }
-
-            Spacer(modifier = Modifier.width(24.dp))
-
-            // Столбик "Реал" (редактируемые поля)
-            Column(
-                modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Реал",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-
-                // Первое поле Реал
-                CoefficientField(
-                    value = realValue1,
-                    onValueChange = onRealValue1Change,
-                    isFocused = isFieldFocused(0),
-                    onFocusChange = { onFocusChange(0, it) },
-                    focusRequester = focusRequesters[0],
-                    label = "Значение 1",
+            } else if (isSelected) {
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp)
-                )
-
-                // Второе поле Реал
-                CoefficientField(
-                    value = realValue2,
-                    onValueChange = onRealValue2Change,
-                    isFocused = isFieldFocused(1),
-                    onFocusChange = { onFocusChange(1, it) },
-                    focusRequester = focusRequesters[1],
-                    label = "Значение 2",
-                    modifier = Modifier.fillMaxWidth()
-                )
+                        .size(24.dp)
+                        .background(primaryColor.copy(alpha = 0.3f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "✓",
+                        color = primaryColor,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontSize = 18.sp
+                    )
+                }
             }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        // Подсказка
-        if (connectionState != ConnectionState.CONNECTED) {
-            ConnectionRequiredWarning(
-                message = "Для изменения настроек требуется подключение к устройству",
-                modifier = Modifier.fillMaxWidth()
-            )
-        } else {
-            Text(
-                text = "Активное поле: ${activeFieldIndex + 1}/2",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(top = 8.dp)
-            )
         }
     }
 }
@@ -3775,6 +3826,7 @@ fun CoefficientField(
     onFocusChange: (Boolean) -> Unit,
     focusRequester: FocusRequester,
     label: String,
+    readOnly: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -3804,60 +3856,81 @@ fun CoefficientField(
                 width = if (isFocused) 2.dp else 1.dp
             )
         ) {
-            BasicTextField(
-                value = value,
-                onValueChange = { newValue ->
-                    // Фильтруем только цифры
-                    val filtered = newValue.filter { it.isDigit() }
-                    onValueChange(filtered)
-                },
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { focusState ->
-                        onFocusChange(focusState.isFocused)
-                    },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Number,
-                    imeAction = ImeAction.Next
-                ),
-                keyboardActions = KeyboardActions(
-                    onNext = {
-                        keyboardController?.hide()
-                        onFocusChange(false)
-                    }
-                ),
-                textStyle = MaterialTheme.typography.titleMedium.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = 18.sp
-                ),
-                decorationBox = { innerTextField ->
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp)
-                            .padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (value.isEmpty()) {
-                            Text(
-                                text = "Введите...",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 16.sp
-                            )
+                    .fillMaxSize()
+                    .then(if (readOnly) Modifier.pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                event.changes.forEach { it.consumeAllChanges() }
+                            }
                         }
-                        innerTextField()
+                    } else Modifier)
+            ) {
+                BasicTextField(
+                    value = value,
+                    onValueChange = { newValue ->
+                        if (!readOnly) {
+                            val filtered = newValue.filter { it.isDigit() }
+                            onValueChange(filtered)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .focusRequester(focusRequester)
+                        .onFocusChanged { focusState ->
+                            onFocusChange(focusState.isFocused)
+                        },
+                    readOnly = readOnly,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Number,
+                        imeAction = ImeAction.Next
+                    ),
+                    keyboardActions = KeyboardActions(
+                        onNext = {
+                            keyboardController?.hide()
+                            onFocusChange(false)
+                        }
+                    ),
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 18.sp
+                    ),
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            if (value.isEmpty() && !readOnly) {
+                                Text(
+                                    text = "Введите...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 16.sp
+                                )
+                            } else if (readOnly && value.isEmpty()) {
+                                Text(
+                                    text = "0",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 16.sp
+                                )
+                            }
+                            innerTextField()
+                        }
                     }
-                }
-            )
+                )
+            }
         }
     }
 }
-
 
 @Composable
 fun DeviceStatusCard(
