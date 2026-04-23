@@ -169,6 +169,7 @@ fun ConnectedDeviceScreen(
         val del: Long = 400
         if(prevMainIndex == mainSelectedIndex) {
             sendNavigationCommand("ENTER")
+            Thread.sleep(del)
         } else{
             if(prevMainIndex > mainSelectedIndex){
                 for(i in mainSelectedIndex..prevMainIndex-1){
@@ -176,19 +177,26 @@ fun ConnectedDeviceScreen(
                     Thread.sleep(del)
                 }
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             } else{
                 for (i in prevMainIndex..mainSelectedIndex-1) {
                     sendNavigationCommand("DOWN")
                     Thread.sleep(del)
                 }
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             }
         }
         prevMainIndex = mainSelectedIndex
         when (index) {
             0 -> currentScreen = DeviceScreen.FUNCTIONS
             1 -> currentScreen = DeviceScreen.SYSTEM_SETTINGS
-            2 -> {}
+            2 -> {coroutineScope.launch {
+                delay(500)
+                bluetoothViewModel?.disconnectFromDevice(deviceAddress)
+                viewModel.cleanup()
+                onBack()
+            }}
             3 -> showPowerOffDialog = true
         }
         closeKeyboard()
@@ -198,6 +206,7 @@ fun ConnectedDeviceScreen(
         val del: Long = 400
         if(prevFunctionsIndex == functionsSelectedIndex){
             sendNavigationCommand("ENTER")
+            Thread.sleep(del)
         } else{
             if(prevFunctionsIndex > functionsSelectedIndex){
                 for(i in functionsSelectedIndex..prevFunctionsIndex-1){
@@ -205,12 +214,14 @@ fun ConnectedDeviceScreen(
                     Thread.sleep(del)
                 }
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             } else{
                 for (i in prevFunctionsIndex..functionsSelectedIndex-1) {
                     sendNavigationCommand("DOWN")
                     Thread.sleep(del)
                 }
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             }
         }
         prevFunctionsIndex = functionsSelectedIndex
@@ -244,19 +255,24 @@ fun ConnectedDeviceScreen(
         val del: Long = 450
         if(prevSettingsIndex == systemSettingsSelectedIndex){
             sendNavigationCommand("ENTER")
+            Thread.sleep(del)
         } else{
             if(prevSettingsIndex > systemSettingsSelectedIndex){
                 for(i in systemSettingsSelectedIndex..prevSettingsIndex-1){
                     sendNavigationCommand("UP")
                     Thread.sleep(del)
                 }
+                Thread.sleep(del)
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             } else{
                 for (i in prevSettingsIndex..systemSettingsSelectedIndex-1) {
                     sendNavigationCommand("DOWN")
                     Thread.sleep(del)
                 }
+                Thread.sleep(del)
                 sendNavigationCommand("ENTER")
+                Thread.sleep(del)
             }
         }
         prevSettingsIndex = systemSettingsSelectedIndex
